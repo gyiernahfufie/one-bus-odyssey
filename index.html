@@ -1,0 +1,866 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>One Bus Odyssey — Singapore, one route at a time</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<style>
+  :root{
+    --ink:#1d1c22;
+    --paper:#f7f6f2;
+    --panel:#ffffff;
+    --pole:#ffc72c;        /* bus-pole yellow */
+    --sbs:#5b2d8e;         /* seat-fabric purple */
+    --signal:#e4452b;      /* stop-bell red */
+    --go:#1f8a5b;          /* green for done */
+    --dim:#a8a6a0;
+    --line:#e4e2db;
+    --radius:14px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:var(--paper);color:var(--ink);line-height:1.55;
+  }
+  .cond{font-family:"Arial Narrow","Helvetica Neue Condensed","Roboto Condensed",Arial,sans-serif;letter-spacing:.01em}
+
+  /* ---------- header ---------- */
+  header{
+    background:var(--ink);color:#fff;padding:34px 20px 28px;
+    border-bottom:6px solid var(--pole);
+  }
+  .wrap{max-width:980px;margin:0 auto}
+  .eyebrow{font-size:12px;text-transform:uppercase;letter-spacing:.22em;color:var(--pole);font-weight:700}
+  h1{font-size:clamp(30px,6vw,52px);font-weight:800;line-height:1.05;margin:8px 0 10px;text-transform:uppercase;letter-spacing:-.01em}
+  h1 .num{color:var(--pole)}
+  .sub{color:#cfcdc7;max-width:560px;font-size:15px}
+
+  /* stats strip */
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-top:22px}
+  .stat{background:#2a2930;border-radius:10px;padding:12px 14px;border:1px solid #3a3941}
+  .stat b{display:block;font-size:24px;font-weight:800}
+  .stat span{font-size:11px;text-transform:uppercase;letter-spacing:.12em;color:#b8b6b0}
+  .stat .bar{height:6px;background:#414049;border-radius:3px;margin-top:8px;overflow:hidden}
+  .stat .bar i{display:block;height:100%;background:var(--pole);border-radius:3px}
+
+  nav{background:var(--ink);position:sticky;top:0;z-index:1000;border-bottom:1px solid #3a3941}
+  nav .wrap{display:flex;gap:4px;overflow-x:auto;padding:0 14px}
+  nav a{color:#cfcdc7;text-decoration:none;font-size:13px;font-weight:600;padding:12px 12px;white-space:nowrap;border-bottom:3px solid transparent}
+  nav a:hover,nav a:focus-visible{color:#fff;border-bottom-color:var(--pole)}
+
+  main{padding:28px 16px 60px}
+  section{margin:0 auto 46px;max-width:980px}
+  h2{font-size:22px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;display:flex;align-items:center;gap:10px;margin-bottom:6px}
+  h2::before{content:"";width:26px;height:14px;background:var(--pole);border-radius:3px;display:inline-block}
+  .sectionnote{color:#6f6d67;font-size:14px;margin-bottom:16px;max-width:620px}
+
+  /* ---------- map ---------- */
+  #map{height:430px;border-radius:var(--radius);border:1px solid var(--line);z-index:1}
+  .legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:10px;font-size:13px;color:#55534d}
+  .legend i{display:inline-block;width:22px;height:5px;border-radius:3px;vertical-align:middle;margin-right:6px}
+  .mapnote{font-size:12px;color:#8a8881;margin-top:6px}
+  .mapfocusbar{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--ink);color:#fff;padding:8px 8px 8px 14px;border-radius:10px;margin-bottom:8px;font-size:13px;font-weight:600}
+  .mapfocusbar button{background:var(--pole);color:var(--ink);border-color:var(--ink);font-size:12px;padding:6px 10px;flex:none}
+  .busstop-icon{width:26px;height:26px;background:var(--pole);border:2px solid var(--ink);border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:14px;box-shadow:1.5px 1.5px 0 var(--ink)}
+
+  /* ---------- route plates ---------- */
+  .plate{
+    display:inline-flex;align-items:center;justify-content:center;
+    min-width:58px;height:44px;padding:0 12px;border-radius:8px;
+    font-weight:900;font-size:24px;line-height:1;
+    background:var(--pole);color:var(--ink);border:2px solid var(--ink);
+    box-shadow:2px 2px 0 var(--ink);
+  }
+  .plate.todo{background:#fff;color:var(--dim);border-color:var(--dim);box-shadow:2px 2px 0 var(--dim)}
+  .plate.mini{min-width:42px;height:30px;font-size:16px;border-width:1.5px;box-shadow:1.5px 1.5px 0 var(--ink);padding:0 8px}
+  .ride-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px dashed var(--line);font-size:14px}
+  .ride-row:last-child{border-bottom:none}
+  .ride-row small{margin-left:auto;color:#8a8881;white-space:nowrap}
+  .ridescroll{max-height:280px;overflow:auto;padding-right:4px}
+  .ride-row .rm{padding:2px 8px;font-size:12px;border-width:1px;margin-left:8px;flex:none}
+  .ride-row.click{cursor:pointer;border-radius:8px;padding-left:4px;padding-right:4px}
+  .ride-row.click:hover{background:#f6f4ee}
+  .card{transition:box-shadow .3s ease}
+  .card.flash{box-shadow:0 0 0 4px var(--pole)}
+
+  /* ---------- route cards ---------- */
+  .routes{display:grid;gap:18px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden}
+  .card-head{display:flex;align-items:center;gap:14px;padding:16px 18px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .card-head .title{font-weight:800;font-size:17px}
+  .card-head .dir{color:#6f6d67;font-size:13px}
+  .tags{display:flex;gap:6px;flex-wrap:wrap;margin-left:auto}
+  .tag{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;padding:4px 9px;border-radius:99px;background:#f0eee8;color:#55534d;border:1px solid var(--line)}
+  .tag.vibe{background:#efe7f8;color:var(--sbs);border-color:#ddd0ee}
+  .card-body{padding:16px 18px;display:grid;gap:14px}
+  .bestfind{background:#fff8e3;border:1px dashed #e8c75a;border-radius:10px;padding:10px 14px;font-size:14px}
+  .bestfind b{color:#8a6d00;text-transform:uppercase;font-size:11px;letter-spacing:.1em;display:block;margin-bottom:2px}
+  .stops{display:grid;gap:8px}
+  .stop{display:flex;gap:10px;align-items:flex-start;font-size:14px}
+  .stop .dot{width:12px;height:12px;border-radius:50%;background:var(--sbs);margin-top:4px;flex:none;border:2px solid #fff;box-shadow:0 0 0 2px var(--sbs)}
+  .stop.alight .dot{background:var(--signal);box-shadow:0 0 0 2px var(--signal)}
+  .stop .alabel{font-size:10px;font-weight:800;color:var(--signal);text-transform:uppercase;letter-spacing:.08em}
+  .photo{width:46px;height:46px;border-radius:8px;flex:none;background:#efede7;display:flex;align-items:center;justify-content:center;font-size:22px;border:1px solid var(--line)}
+  .newground{font-size:12px;color:#1f8a5b;font-weight:700}
+
+  .card-actions{display:flex;gap:10px;flex-wrap:wrap;padding:0 18px 16px}
+  button{
+    font:inherit;font-weight:700;font-size:13px;cursor:pointer;border-radius:9px;
+    padding:9px 14px;border:2px solid var(--ink);background:#fff;color:var(--ink);
+    transition:transform .06s ease;
+  }
+  button:hover{transform:translateY(-1px)}
+  button:focus-visible{outline:3px solid var(--pole);outline-offset:2px}
+  button.primary{background:var(--ink);color:#fff}
+  button.primary.followed{background:var(--go);border-color:var(--go)}
+  button.ghost{border-color:var(--line);color:#6f6d67}
+
+  /* comments */
+  .comments{border-top:1px solid var(--line);padding:14px 18px;background:#fbfaf7;display:none}
+  .comments.open{display:block}
+  .comment{display:flex;gap:10px;margin-bottom:10px;font-size:14px}
+  .avatar{width:30px;height:30px;border-radius:50%;background:var(--sbs);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;flex:none}
+  .comment .meta{font-size:11px;color:#8a8881}
+  .cform{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+  .cform input,.cform textarea{font:inherit;font-size:14px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:#fff}
+  .cform input{width:130px}
+  .cform textarea{flex:1;min-width:180px;resize:vertical;min-height:38px}
+
+  /* ---------- search toolbar ---------- */
+  .toolbar{display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+  .toolbar input{flex:1;min-width:200px;font:inherit;font-size:14px;padding:10px 12px;border:2px solid var(--ink);border-radius:9px;background:#fff}
+  .toolbar input:focus-visible{outline:3px solid var(--pole);outline-offset:1px}
+  .resultsinfo{font-size:13px;color:#6f6d67;margin-bottom:10px;min-height:18px}
+
+  /* ---------- picker ---------- */
+  .picker{background:var(--ink);color:#fff;border-radius:var(--radius);padding:26px 22px;text-align:center}
+  .picker p{color:#b8b6b0;font-size:14px;max-width:480px;margin:0 auto 16px}
+  .pickerplate{
+    width:120px;height:84px;margin:0 auto 16px;border-radius:12px;
+    background:var(--pole);color:var(--ink);display:flex;align-items:center;justify-content:center;
+    font-size:46px;font-weight:900;border:3px solid #fff;box-shadow:0 6px 0 rgba(0,0,0,.35);
+  }
+  .pickerplate.spin{animation:jiggle .12s linear infinite}
+  @keyframes jiggle{0%{transform:rotate(-1.5deg)}50%{transform:rotate(1.5deg)}100%{transform:rotate(-1.5deg)}}
+  @media (prefers-reduced-motion:reduce){.pickerplate.spin{animation:none}}
+  .pickresult{min-height:22px;font-size:14px;color:var(--pole);font-weight:700}
+
+  /* ---------- checklist ---------- */
+  .twocol{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  @media(max-width:700px){.twocol{grid-template-columns:1fr}}
+  .listbox{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:18px}
+  .listbox h3{font-size:13px;text-transform:uppercase;letter-spacing:.12em;margin-bottom:12px;color:#55534d}
+  .citem{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px dashed var(--line);font-size:14px}
+  .citem:last-child{border-bottom:none}
+  .check{width:22px;height:22px;border-radius:6px;border:2px solid var(--dim);flex:none;display:flex;align-items:center;justify-content:center;font-size:13px;color:#fff}
+  .check.done{background:var(--go);border-color:var(--go)}
+  .citem small{color:#8a8881;margin-left:auto;white-space:nowrap}
+
+  /* todo */
+  .todoform{display:flex;gap:8px;margin-top:12px}
+  .todoform input{flex:1;font:inherit;font-size:14px;padding:9px 10px;border:1px solid var(--line);border-radius:8px}
+  .todo-item button{padding:2px 8px;font-size:12px;border-width:1px;margin-left:auto}
+
+  /* ---------- badges ---------- */
+  .badges{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
+  .badge{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px 12px;text-align:center;transition:filter .2s}
+  .badge .ico{font-size:34px;display:block;margin-bottom:8px}
+  .badge b{font-size:13px;display:block}
+  .badge span{font-size:11.5px;color:#8a8881;display:block;margin-top:3px;line-height:1.35}
+  .badge.locked{filter:grayscale(1);opacity:.55}
+  .badge.unlocked{border-color:var(--pole);box-shadow:0 0 0 3px #ffe9a8}
+
+  /* ---------- bingo ---------- */
+  .bingo{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;max-width:480px}
+  .bcell{aspect-ratio:1;background:var(--panel);border:1.5px solid var(--line);border-radius:10px;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
+    cursor:pointer;font-size:12px;text-align:center;padding:6px;user-select:none;font-weight:600;color:#55534d}
+  .bcell .bi{font-size:26px}
+  .bcell.hit{background:var(--pole);border-color:var(--ink);color:var(--ink)}
+  .bingomsg{margin-top:10px;font-weight:700;color:var(--go);min-height:20px;font-size:14px}
+
+  /* toast */
+  #toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(80px);
+    background:var(--ink);color:#fff;padding:12px 18px;border-radius:99px;font-size:14px;font-weight:600;
+    border:2px solid var(--pole);opacity:0;transition:all .3s ease;z-index:2000;pointer-events:none;max-width:90vw;text-align:center}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+  footer{background:var(--ink);color:#b8b6b0;padding:26px 20px;font-size:13px;border-top:6px solid var(--pole)}
+  footer .wrap{display:grid;gap:6px}
+  footer b{color:#fff}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="eyebrow">Singapore · one route per trip · no transfers</div>
+    <h1>One Bus <span class="num">Odyssey</span></h1>
+    <p class="sub">I'm exploring Singapore one bus route at a time — board, ride, hop off wherever it looks fun. Follow along, ride the routes yourself, tick off the bingo and earn badges.</p>
+    <div class="stats">
+      <div class="stat"><b id="stRoutes">0</b><span>Routes ridden</span></div>
+      <div class="stat"><b id="stStops">0</b><span>Hop-off finds</span></div>
+      <div class="stat"><b id="stCover">0%</b><span>Island unlocked</span>
+        <div class="bar"><i id="coverBar" style="width:0%"></i></div></div>
+    </div>
+  </div>
+</header>
+
+<nav>
+  <div class="wrap">
+    <a href="#map-sec">Map</a>
+    <a href="#routes-sec">Trip log</a>
+    <a href="#picker-sec">Route picker</a>
+    <a href="#check-sec">Checklist</a>
+    <a href="#myrides-sec">My rides</a>
+    <a href="#badges-sec">Badges</a>
+    <a href="#bingo-sec">Bus bingo</a>
+  </div>
+</nav>
+
+<main>
+
+  <section id="map-sec">
+    <h2>The coverage map</h2>
+    <p class="sectionnote">Solid lines are routes I've ridden — that part of the island is unlocked. Dashed grey lines are still in the fog. Tap any route line, or “View on map” on a trip, to zoom in and see that trip's pinned spots.</p>
+    <div class="mapfocusbar" id="mapFocus" style="display:none">
+      <span id="mapFocusLabel"></span>
+      <button onclick="showAllRoutes()">✕ Show all routes</button>
+    </div>
+    <div id="map" role="img" aria-label="Map of Singapore showing bus routes ridden and planned"></div>
+    <div class="legend">
+      <span><i style="background:var(--sbs)"></i>Ridden (unlocked)</span>
+      <span><i style="background:var(--dim);opacity:.7"></i>Planned (in the fog)</span>
+      <span>🚏 Where to alight · 🔴 🟣 Places to go (red = top picks) · ┄ short walk — shown when a trip is selected</span>
+    </div>
+    <p class="mapnote">Routes are sketched between key stops, not exact road geometry — close enough to follow, light enough to load fast.</p>
+  </section>
+
+  <section id="routes-sec">
+    <h2>Trip log</h2>
+    <p class="sectionnote">Each entry is one trip on one bus. “Followed it” tells me you rode it too — it counts toward your badges. Comments are open on every route.</p>
+    <div class="toolbar">
+      <input id="searchInput" type="search" placeholder="Search a bus no., spot or vibe — try “kallang” or “coastal”" aria-label="Search routes" oninput="doSearch(this.value)">
+      <button onclick="nearMe()">📍 Near me</button>
+      <button class="ghost" onclick="clearSearch()">Clear</button>
+    </div>
+    <div class="resultsinfo" id="resultsInfo"></div>
+    <div class="routes" id="routeCards"></div>
+    <div style="text-align:center;margin-top:14px">
+      <button id="showMore" onclick="showMore()" style="display:none">Show more trips ↓</button>
+    </div>
+  </section>
+
+  <section id="picker-sec">
+    <h2>Route picker</h2>
+    <div class="picker">
+      <p>Can't decide? Let the machine commit you to a bus before you board. House rule: whatever it lands on, you ride it.</p>
+      <div class="pickerplate" id="pickerPlate">?</div>
+      <button class="primary" id="spinBtn" onclick="spinPicker()" style="background:var(--pole);color:var(--ink);border-color:#fff">Spin the route</button>
+      <div class="pickresult" id="pickResult"></div>
+    </div>
+  </section>
+
+  <section id="check-sec">
+    <h2>Checklist &amp; to-do</h2>
+    <div class="twocol">
+      <div class="listbox">
+        <h3>Route checklist</h3>
+        <div id="checkDone"></div>
+      </div>
+      <div class="listbox">
+        <h3>Your trip to-do <span style="font-weight:400;text-transform:none;letter-spacing:0">(plan your own ride)</span></h3>
+        <div id="todoList"></div>
+        <div class="todoform">
+          <input id="todoInput" type="text" placeholder="e.g. Try bus 36 from the airport" aria-label="Add a to-do">
+          <button onclick="addTodo()">Add</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="myrides-sec">
+    <h2>My rides</h2>
+    <p class="sectionnote">Two journeys side by side — every route I've ever documented, and every route you've ridden along.</p>
+    <div class="twocol">
+      <div class="listbox">
+        <h3>The odyssey so far · author</h3>
+        <div id="authorRides"></div>
+      </div>
+      <div class="listbox">
+        <h3>Your rides</h3>
+        <div id="visitorRides"></div>
+        <p style="font-size:12px;color:#8a8881;margin-top:10px">Kept for this visit for now — once sign-in is live, your ride history will follow you across devices.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="badges-sec">
+    <h2>Badges</h2>
+    <p class="sectionnote">Earn these by following routes, completing the bingo, and exploring. They're yours for this visit — ride along and collect.</p>
+    <div class="badges" id="badgeGrid"></div>
+  </section>
+
+  <section id="bingo-sec">
+    <h2>Bus bingo</h2>
+    <p class="sectionnote">Bring this on your ride. Tap a square when you spot it from the bus window. Full card unlocks the Front Row Rider badge.</p>
+    <div class="bingo" id="bingoGrid"></div>
+    <div class="bingomsg" id="bingoMsg"></div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <div><b>One Bus Odyssey</b> — a one-person documentation project; everyone's welcome to follow.</div>
+    <div>Demo note: follows, comments, to-dos and badges live in this page session and reset on refresh. Hooking them to a free comments/database service makes them permanent — that's the next step.</div>
+  </div>
+</footer>
+
+<div id="toast" role="status"></div>
+
+<script>
+/* ================= DATA ================= */
+const ROUTES = [
+  {
+    num: "125", done: true, date:"Jun 2026",
+    dir: "St Michael's Ter ↺ Sims Drive (loop)",
+    vibes: ["Food-heavy", "Heartland", "Loop service"],
+    areas: ["Whampoa", "Balestier", "Boon Keng", "Bendemeer", "Kallang", "MacPherson", "Aljunied", "Sims Drive", "Serangoon Road", "Kitchener Road"],
+    best: "Whampoa Drive food cluster — makan place and a traditional bakery within minutes of one stop.",
+    newground: "+10% new ground (est.) — first route through Whampoa & Kallang Way",
+    coords: [[1.3260,103.8556],[1.3262,103.8512],[1.3230,103.8550],[1.3170,103.8560],[1.3140,103.8620],[1.3203,103.8640],[1.3240,103.8700],[1.3270,103.8761],[1.3258,103.8810],[1.3210,103.8790]],
+    stops: [
+      {name:"Whampoa Makan Place", note:"Hawker classics by day, comes alive again after dark. Go hungry.", alight:true, alightAt:"Opp Balestier Point", photo:"🍜", pos:[1.3230,103.8550], stopPos:[1.3262,103.8512],
+       gmap:"https://www.google.com/maps/search/?api=1&query=Whampoa%20Makan%20Place&query_place_id=ChIJ41s8zx8Z2jERXqRSzEj-TcE"},
+      {name:"Sing Hon Loong Bakery", note:"Old-school traditional bakery on Whampoa Drive — soft loaves and $1+ curry buns.", alight:true, alightAt:"Opp Balestier Point", photo:"🍞", pos:[1.3226,103.8533], stopPos:[1.3262,103.8512],
+       gmap:"https://www.google.com/maps/search/?api=1&query=Sing%20Hon%20Loong%20Bakery&query_place_id=ChIJIxr-dtkZ2jERvsoyFYhWscw"},
+      {name:"Blk 34 Whampoa", note:"Hop off at Boon Keng and wander the old estate blocks.", alight:true, alightAt:"Boon Keng Stn", photo:"🏢", pos:[1.3203,103.8640], stopPos:[1.3196,103.8625],
+       gmap:"https://www.google.com/maps/search/?api=1&query=34%20Whampoa%20West&query_place_id=ChIJr7ZIxtMZ2jERedghBoRwMDM"},
+      {name:"Dolphin's Restaurant", note:"Retro old-school Western up in an industrial building on Genting Lane — free-flow coffee and soup. Closed Sundays.", alight:true, alightAt:"Tannery Blk", photo:"🍴", pos:[1.3270,103.8761], stopPos:[1.3277,103.8740],
+       gmap:"https://www.google.com/maps/search/?api=1&query=Dolphins%20Restaurant%20Genting%20Lane&query_place_id=ChIJdZntIAAX2jERe3mxACwCiOw"}
+    ],
+    comments: []
+  },
+  {
+    num: "12", done: true, date:"Mar 2026",
+    dir: "Pasir Ris ⇄ Kampong Bahru",
+    vibes: ["Heartland", "Food-heavy", "Old shophouses"],
+    areas: ["Pasir Ris","Geylang","Kallang","Bugis","Kampong Glam","Chinatown"],
+    best: "Geylang Serai Market at 9am — the putu piring stall two units from the escalator.",
+    newground: "+18% new ground when I rode it",
+    coords: [[1.373,103.949],[1.350,103.930],[1.317,103.893],[1.311,103.871],[1.300,103.855],[1.284,103.843],[1.276,103.839]],
+    stops: [
+      {name:"Geylang Serai Market", note:"Wet market upstairs, hawker food downstairs. Go hungry.", alight:true, photo:"🍢", pos:[1.317,103.897]},
+      {name:"Kallang Riverside", note:"Quiet stretch of river, old boat sheds. Nice 20-min walk.", alight:false, photo:"🌊", pos:[1.311,103.871]},
+      {name:"Bugis / Haji Lane", note:"Hop off before Victoria St jams. Murals + kopi.", alight:true, photo:"🎨", pos:[1.300,103.857]},
+      {name:"Chinatown (Upp Cross St)", note:"End-ish of the line. Temple, then biscuit shops on Sago St.", alight:true, photo:"🏮", pos:[1.284,103.843]}
+    ],
+    comments: [
+      {who:"Mei", text:"Did this last Sunday because of your post — the putu piring queue was worth it!"},
+      {who:"Raj", text:"Pro tip: sit upper deck left side for the Kallang view."}
+    ]
+  },
+  {
+    num: "174", done: true, date:"Apr 2026",
+    dir: "Boon Lay ⇄ Kampong Bahru",
+    vibes: ["Green", "Colonial core", "Long ride"],
+    areas: ["Boon Lay","Jurong","Clementi","Holland Village","Bukit Timah","Tanglin","Orchard","Chinatown"],
+    best: "Front-row upper deck through Holland Road — the rain trees close over the road like a tunnel.",
+    newground: "+22% new ground when I rode it",
+    coords: [[1.339,103.705],[1.332,103.743],[1.317,103.765],[1.307,103.790],[1.305,103.815],[1.304,103.832],[1.289,103.845],[1.276,103.839]],
+    stops: [
+      {name:"Holland Village", note:"Coffee stop. The XO carrot cake at the food centre.", alight:true, photo:"☕", pos:[1.311,103.794]},
+      {name:"Botanic Gardens (Napier Rd)", note:"Free entry, swans, and shade. Easy 1-hr detour.", alight:true, photo:"🌿", pos:[1.305,103.815]},
+      {name:"Orchard Road", note:"Stayed on — watched it through the window like a movie.", alight:false, photo:"🏙️", pos:[1.304,103.832]}
+    ],
+    comments: [
+      {who:"Wei Lin", text:"The rain tree tunnel is real. Took my parents on this one."}
+    ]
+  },
+  {
+    num: "851", done: true, date:"May 2026",
+    dir: "Bukit Batok ⇄ Yishun",
+    vibes: ["Heartland", "Reservoir", "Quiet"],
+    areas: ["Bukit Batok","Bukit Panjang","Mandai","Yishun"],
+    best: "Lower Seletar Reservoir at golden hour, ten minutes' walk from the Yishun end.",
+    newground: "+15% new ground when I rode it",
+    coords: [[1.349,103.749],[1.368,103.776],[1.380,103.800],[1.404,103.793],[1.418,103.820],[1.429,103.835]],
+    stops: [
+      {name:"Bukit Panjang (old line)", note:"Spot the LRT weaving overhead. Good kopitiam at the interchange.", alight:false, photo:"🚝", pos:[1.380,103.800]},
+      {name:"Lower Seletar Reservoir", note:"Boardwalk + sunset. Bring kopi peng.", alight:true, photo:"🌅", pos:[1.424,103.831]}
+    ],
+    comments: []
+  },
+  {
+    num: "36", done: false,
+    dir: "Changi Airport ⇄ Tomlinson Rd",
+    vibes: ["Coastal", "Skyline"],
+    areas: ["Changi","East Coast","Marine Parade","Marina Bay","City"],
+    best: "",
+    newground: "Est. +20% new ground — most of the East Coast stretch is still fog",
+    coords: [[1.357,103.988],[1.330,103.965],[1.305,103.920],[1.297,103.890],[1.292,103.875],[1.290,103.857]],
+    stops: [],
+    comments: [{who:"Adam", text:"Requesting this one next! Airport → city by the coast sounds great."}]
+  },
+  {
+    num: "67", done: false,
+    dir: "Choa Chu Kang ⇄ Tampines",
+    vibes: ["Cross-island", "Marathon route"],
+    areas: ["Choa Chu Kang","Bukit Panjang","Bukit Timah","Little India","Geylang","Tampines"],
+    best: "",
+    newground: "Est. +25% new ground — the big east–west crossing",
+    coords: [[1.385,103.745],[1.378,103.772],[1.366,103.805],[1.350,103.848],[1.342,103.880],[1.352,103.943]],
+    stops: [],
+    comments: []
+  },
+  {
+    num: "7", done: false,
+    dir: "Bedok ⇄ Clementi",
+    vibes: ["Classic", "Food-heavy"],
+    areas: ["Bedok","Geylang","Orchard","Holland Village","Clementi"],
+    best: "",
+    newground: "Est. +12% new ground",
+    coords: [[1.324,103.930],[1.313,103.902],[1.300,103.872],[1.300,103.846],[1.305,103.816],[1.312,103.775],[1.315,103.765]],
+    stops: [],
+    comments: []
+  }
+];
+
+const BINGO = [
+  ["🐈","A kopitiam cat"],["🛒","A wet market"],["🎨","A wall mural"],
+  ["🏪","Old provision shop"],["⛩️","Temple or mosque"],["🌳","Giant rain tree"],
+  ["🚲","Uncle on a bicycle"],["🏗️","HDB under construction"],["🛕","Void deck wedding/funeral"]
+];
+
+const BADGES = [
+  {id:"first",   ico:"🚌", name:"First Follow",    desc:"Log your first ride",            test:s=>s.rides.length>=1},
+  {id:"explorer",ico:"🧭", name:"Explorer",        desc:"Ride 3 different routes",            test:s=>rideNums().size>=3},
+  {id:"repeat",  ico:"🔁", name:"Repeat Rider",    desc:"Ride the same route twice — new alighting points count!", test:s=>[...rideNums()].some(n=>rideCount(n)>=2)},
+  {id:"coastal", ico:"🌊", name:"Coastal Cruiser", desc:"Ride a coastal-vibe route",        test:s=>[...rideNums()].some(n=>ROUTES.find(r=>r.num===n)?.vibes.includes("Coastal"))},
+  {id:"hawker",  ico:"🍜", name:"Hawker Hunter",   desc:"Ride a food-heavy route",          test:s=>[...rideNums()].some(n=>ROUTES.find(r=>r.num===n)?.vibes.includes("Food-heavy"))},
+  {id:"bingo",   ico:"🪟", name:"Front Row Rider", desc:"Complete the bus bingo card",        test:s=>s.bingoDone},
+  {id:"voice",   ico:"💬", name:"Conductor",       desc:"Leave a comment on any route",       test:s=>s.commented},
+  {id:"planner", ico:"📝", name:"Trip Planner",    desc:"Add a to-do for your own ride",      test:s=>s.todoAdded},
+  {id:"lucky",   ico:"🎰", name:"Fate Rider",      desc:"Spin the route picker",              test:s=>s.spun}
+];
+
+/* ============== SESSION STATE (in-memory only) ============== */
+const S = { rides:[], bingo:new Set(), bingoDone:false, commented:false, todoAdded:false, spun:false };
+const rideNums  = () => new Set(S.rides.map(r=>r.num));
+const rideCount = num => S.rides.filter(r=>r.num===num).length;
+const tripRideCount = i => S.rides.filter(r=>r.i===i).length;
+
+/* ================= HEADER STATS ================= */
+function renderStats(){
+  const done = ROUTES.filter(r=>r.done);
+  document.getElementById("stRoutes").textContent = new Set(done.map(r=>r.num)).size;
+  document.getElementById("stStops").textContent = done.reduce((a,r)=>a+r.stops.length,0);
+  const cover = Math.min(100, done.length*9 + done.reduce((a,r)=>a+r.stops.length,0)*2); // playful approximation
+  document.getElementById("stCover").textContent = cover + "%";
+  document.getElementById("coverBar").style.width = cover + "%";
+}
+
+/* ================= MAP ================= */
+let map = null, tripLayers = [], focusedTrip = null;
+function lineStyle(r){
+  return { color: r.done ? "#5b2d8e" : "#a8a6a0", weight: r.done ? 5 : 3,
+           opacity: r.done ? .9 : .55, dashArray: r.done ? null : "6 8" };
+}
+function initMap(){
+  try{
+    map = L.map("map",{scrollWheelZoom:false}).setView([1.345,103.83],11);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{
+      maxZoom:18, attribution:"&copy; OpenStreetMap contributors"
+    }).addTo(map);
+    ROUTES.forEach((r,i)=>{
+      const line = L.polyline(r.coords, lineStyle(r)).addTo(map);
+      line.bindTooltip(`Bus ${r.num} — ${r.done?"ridden":"planned"}. Tap to zoom in.`,{sticky:true});
+      line.on("click", ()=>focusTrip(i));
+      tripLayers[i] = { line, markers: [] };
+    });
+  }catch(e){
+    document.getElementById("map").innerHTML =
+      "<div style='padding:30px;text-align:center;color:#8a8881'>Map couldn't load (offline?). The trip log below still has everything.</div>";
+  }
+}
+function clearTripMarkers(){
+  if(focusedTrip!=null && tripLayers[focusedTrip]){
+    tripLayers[focusedTrip].markers.forEach(m=>map.removeLayer(m));
+    tripLayers[focusedTrip].markers = [];
+  }
+}
+function focusTrip(i){
+  if(!map || !tripLayers[i]) return;
+  clearTripMarkers();
+  focusedTrip = i;
+  const r = ROUTES[i];
+  tripLayers.forEach((t,k)=>{
+    if(k===i) t.line.setStyle({opacity:.95, weight:6});
+    else t.line.setStyle({opacity:.08});
+  });
+  const layers = [];
+  r.stops.forEach(s=>{
+    if(s.stopPos){
+      layers.push(L.polyline([s.stopPos, s.pos],{color:"#55534d", weight:2, dashArray:"2 6", opacity:.75}).addTo(map));
+    }
+    const m = L.circleMarker(s.pos,{
+      radius:9, color:"#fff", weight:2, fillOpacity:1,
+      fillColor: s.alight ? "#e4452b" : "#5b2d8e"
+    }).addTo(map);
+    m.bindPopup(`<b>${s.photo} ${s.name}</b><br>${s.note}${s.alightAt?`<br><small>🚏 Alight at: ${s.alightAt}</small>`:""}${s.gmap?`<br><a href="${s.gmap}" target="_blank" rel="noopener">Open in Google Maps ↗</a>`:""}<br><small>Bus ${r.num}</small>`);
+    layers.push(m);
+  });
+  const alights = new Map();
+  r.stops.forEach(s=>{
+    if(s.stopPos && s.alightAt){
+      if(!alights.has(s.alightAt)) alights.set(s.alightAt, {pos:s.stopPos, places:[]});
+      alights.get(s.alightAt).places.push(s.name);
+    }
+  });
+  alights.forEach((a, name)=>{
+    const m = L.marker(a.pos, {icon: L.divIcon({className:"", html:'<div class="busstop-icon">🚏</div>', iconSize:[26,26], iconAnchor:[13,13]})}).addTo(map);
+    m.bindPopup(`<b>🚏 ${name}</b><br>Alight here for: ${a.places.join(", ")}`);
+    m.bindTooltip(`Alight: ${name}`);
+    layers.push(m);
+  });
+  tripLayers[i].markers = layers;
+  map.fitBounds(tripLayers[i].line.getBounds(), {padding:[36,36]});
+  const bar = document.getElementById("mapFocus");
+  bar.style.display = "flex";
+  document.getElementById("mapFocusLabel").textContent =
+    `Bus ${r.num} · ${r.dir}${r.date ? " · " + r.date : ""}`;
+}
+function showAllRoutes(){
+  if(!map) return;
+  clearTripMarkers();
+  focusedTrip = null;
+  ROUTES.forEach((r,i)=> tripLayers[i].line.setStyle(lineStyle(r)));
+  map.setView([1.345,103.83],11);
+  document.getElementById("mapFocus").style.display = "none";
+}
+function viewTripOnMap(i){
+  focusTrip(i);
+  document.getElementById("map-sec").scrollIntoView({behavior:"smooth"});
+}
+
+/* ================= ROUTE CARDS + SEARCH ================= */
+let visibleCount = 3, query = "", userPos = null;
+
+function matches(r,q){
+  if(!q) return true;
+  const hay = [r.num, "bus "+r.num, r.dir, r.best, r.newground, ...r.vibes, ...(r.areas||[]),
+    ...r.stops.map(s=>s.name+" "+s.note)].join(" ").toLowerCase();
+  return q.toLowerCase().split(/\s+/).every(w=>hay.includes(w));
+}
+function distKm(a,b){
+  const R=6371, dLat=(b[0]-a[0])*Math.PI/180, dLon=(b[1]-a[1])*Math.PI/180;
+  const x=Math.sin(dLat/2)**2+Math.cos(a[0]*Math.PI/180)*Math.cos(b[0]*Math.PI/180)*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(x));
+}
+function routeDist(r){
+  const pts=[...r.coords, ...r.stops.map(s=>s.pos)];
+  return Math.min(...pts.map(p=>distKm(userPos,p)));
+}
+function renderRoutes(){
+  const host = document.getElementById("routeCards");
+  host.innerHTML = "";
+  let list = ROUTES.map((r,i)=>({r,i})).filter(({r})=>matches(r,query));
+  if(userPos) list.sort((a,b)=>routeDist(a.r)-routeDist(b.r));
+  const total = list.length;
+  document.getElementById("resultsInfo").textContent =
+    (query || userPos) ? `${total} route${total!==1?"s":""} found${userPos?" · nearest first":""}` : "";
+  if(!total){
+    host.innerHTML = `<div style="color:#8a8881;padding:20px;text-align:center">No routes pass “${escapeHTML(query)}” yet — that's a gap in the fog. Maybe that's the next trip?</div>`;
+  }
+  list.slice(0, visibleCount).forEach(({r,i})=>{
+    const card = document.createElement("div");
+    card.className = "card";
+    card.id = "trip-" + i;
+    const cnt = tripRideCount(i);
+    card.innerHTML = `
+      <div class="card-head">
+        <span class="plate ${r.done?"":"todo"} cond">${r.num}</span>
+        <div>
+          <div class="title">${r.done ? "Trip log" : "Up next"}${r.date?` <span style="font-weight:600;color:#8a8881;font-size:13px">· ${r.date}</span>`:""}</div>
+          <div class="dir">${r.dir}</div>
+        </div>
+        <div class="tags">${userPos?`<span class="tag" style="background:#e7f3ec;color:#1f8a5b;border-color:#cfe6d8">📍 ${routeDist(r).toFixed(1)} km</span>`:""}${r.vibes.map(v=>`<span class="tag vibe">${v}</span>`).join("")}
+          <span class="tag">${r.done?"✓ Ridden":"In the fog"}</span></div>
+      </div>
+      <div class="card-body">
+        ${r.best?`<div class="bestfind"><b>Best find</b>${r.best}</div>`:""}
+        <div class="newground">🗺️ ${r.newground}</div>
+        ${r.areas?`<div style="font-size:12px;color:#8a8881">Passes: ${r.areas.join(" · ")}</div>`:""}
+        ${r.stops.length?`<div class="stops">${r.stops.map(s=>`
+          <div class="stop ${s.alight?"alight":""}">
+            <span class="dot"></span>
+            <span class="photo">${s.photo}</span>
+            <div><b>${s.gmap?`<a href="${s.gmap}" target="_blank" rel="noopener" style="color:inherit">${s.name} ↗</a>`:s.name}</b> ${s.alight?'<span class="alabel">Alight here</span>':""}${s.alightAt?` <span style="font-size:11px;color:#8a8881">(stop: ${s.alightAt})</span>`:""}<br>
+            <span style="color:#6f6d67">${s.note}</span></div>
+          </div>`).join("")}</div>`
+        : `<div style="color:#8a8881;font-size:14px">No notes yet — this one's still waiting for its trip.</div>`}
+      </div>
+      <div class="card-actions">
+        <button class="primary ${cnt?"followed":""}" data-ride="${i}" onclick="logRide(${i})">
+          ${cnt?`✓ Ridden ×${cnt} — log another`:"🚌 I rode this route"}</button>
+        <button class="ghost" data-undo="${i}" onclick="undoRide(${i})" style="display:${cnt?"inline-block":"none"}" title="Remove your latest ride on this trip">↩ Undo</button>
+        <button class="ghost" onclick="viewTripOnMap(${i})">🗺️ View on map</button>
+        <button class="ghost" onclick="toggleComments(${i})">💬 Comments (<span id="ccount-${i}">${r.comments.length}</span>)</button>
+      </div>
+      <div class="comments" id="comments-${i}">
+        <div id="clist-${i}">${r.comments.map(c=>commentHTML(c)).join("")}</div>
+        <div class="cform">
+          <input id="cname-${i}" placeholder="Name" maxlength="20" aria-label="Your name">
+          <textarea id="ctext-${i}" placeholder="How was your ride? Anything we missed?" aria-label="Your comment"></textarea>
+          <button onclick="addComment(${i})">Post</button>
+        </div>
+      </div>`;
+    host.appendChild(card);
+  });
+  const sm = document.getElementById("showMore");
+  sm.style.display = total > visibleCount ? "inline-block" : "none";
+  if(total > visibleCount) sm.textContent = `Show more trips (${total - visibleCount} hidden) ↓`;
+}
+function showMore(){ visibleCount += 3; renderRoutes(); }
+function doSearch(v){ query = v; visibleCount = 3; renderRoutes(); }
+function clearSearch(){
+  query = ""; userPos = null; visibleCount = 3;
+  document.getElementById("searchInput").value = "";
+  renderRoutes();
+}
+function nearMe(){
+  if(!navigator.geolocation){ toast("This browser doesn't support location"); return; }
+  toast("Locating…");
+  navigator.geolocation.getCurrentPosition(
+    pos=>{
+      userPos = [pos.coords.latitude, pos.coords.longitude];
+      visibleCount = 3; renderRoutes();
+      toast("Routes sorted nearest to you");
+    },
+    ()=>toast("Couldn't get location — allow permission, and note it needs the hosted (https) version")
+  );
+}
+function commentHTML(c){
+  return `<div class="comment"><span class="avatar">${(c.who||"?")[0].toUpperCase()}</span>
+    <div><b>${escapeHTML(c.who)}</b> <span class="meta">· rider</span><br>${escapeHTML(c.text)}</div></div>`;
+}
+function escapeHTML(s){const d=document.createElement("div");d.textContent=s;return d.innerHTML;}
+
+let rideSeq = 0;
+function refreshRouteButtons(i){
+  const c = tripRideCount(i);
+  document.querySelectorAll(`[data-ride='${i}']`).forEach(btn=>{
+    btn.classList.toggle("followed", c>0);
+    btn.innerHTML = c ? `✓ Ridden ×${c} — log another` : "🚌 I rode this route";
+  });
+  document.querySelectorAll(`[data-undo='${i}']`).forEach(b=>{
+    b.style.display = c ? "inline-block" : "none";
+  });
+}
+function logRide(i){
+  const num = ROUTES[i].num;
+  S.rides.push({i, num, when:new Date(), id:++rideSeq});
+  refreshRouteButtons(i);
+  toast(rideCount(num)>1 ? `Bus ${num} again — repeat rides count for badges too 🔁` : `Logged — you've ridden bus ${num}.`);
+  renderBadges(); renderMyRides();
+}
+function undoRide(i){
+  for(let k=S.rides.length-1;k>=0;k--){
+    if(S.rides[k].i===i){ S.rides.splice(k,1); break; }
+  }
+  refreshRouteButtons(i);
+  toast(`Removed your latest ride on bus ${ROUTES[i].num}`);
+  renderBadges(); renderMyRides();
+}
+function removeRide(id){
+  const k = S.rides.findIndex(r=>r.id===id);
+  if(k<0) return;
+  const tripIdx = S.rides[k].i;
+  S.rides.splice(k,1);
+  refreshRouteButtons(tripIdx);
+  toast(`Removed your ride on bus ${ROUTES[tripIdx].num}`);
+  renderBadges(); renderMyRides();
+}
+function tripSnippet(r){
+  const spots = r.stops.filter(s=>s.alight).map(s=>s.name);
+  if(!spots.length) return "";
+  return spots.slice(0,2).join(", ") + (spots.length>2?` +${spots.length-2} more`:"");
+}
+function jumpToTrip(i){
+  query = ""; userPos = null;
+  document.getElementById("searchInput").value = "";
+  visibleCount = ROUTES.length;
+  renderRoutes();
+  const el = document.getElementById("trip-"+i);
+  if(el){
+    el.scrollIntoView({behavior:"smooth", block:"start"});
+    el.classList.add("flash");
+    setTimeout(()=>el.classList.remove("flash"), 1800);
+  }
+}
+function toggleComments(i){ document.getElementById("comments-"+i).classList.toggle("open"); }
+function addComment(i){
+  const name = document.getElementById("cname-"+i).value.trim() || "Rider";
+  const text = document.getElementById("ctext-"+i).value.trim();
+  if(!text){ toast("Write something first 🙂"); return; }
+  ROUTES[i].comments.push({who:name, text});
+  document.getElementById("clist-"+i).innerHTML = ROUTES[i].comments.map(commentHTML).join("");
+  document.getElementById("ccount-"+i).textContent = ROUTES[i].comments.length;
+  document.getElementById("ctext-"+i).value = "";
+  S.commented = true; renderBadges();
+  toast("Comment posted (demo: lives until refresh)");
+}
+
+/* ================= PICKER ================= */
+let spinning = false;
+function spinPicker(){
+  if(spinning) return;
+  const pool = ROUTES.filter(r=>!r.done).map(r=>r.num);
+  if(!pool.length){ toast("No routes left in the fog — add more!"); return; }
+  spinning = true; S.spun = true;
+  const plate = document.getElementById("pickerPlate");
+  const result = document.getElementById("pickResult");
+  result.textContent = "";
+  plate.classList.add("spin");
+  let t = 0;
+  const iv = setInterval(()=>{
+    plate.textContent = pool[Math.floor(Math.random()*pool.length)];
+    t += 90;
+    if(t >= 1800){
+      clearInterval(iv); plate.classList.remove("spin"); spinning=false;
+      const pick = pool[Math.floor(Math.random()*pool.length)];
+      plate.textContent = pick;
+      const r = ROUTES.find(x=>x.num===pick);
+      result.textContent = `Fate says: Bus ${pick} — ${r.dir}. No backsies.`;
+      renderBadges();
+    }
+  },90);
+}
+
+/* ================= CHECKLIST + TODO ================= */
+function renderChecklist(){
+  const host = document.getElementById("checkDone");
+  const seen = new Map();
+  ROUTES.forEach(r=>{
+    const e = seen.get(r.num);
+    if(e){ e.count += r.done?1:0; e.done = e.done || r.done; }
+    else seen.set(r.num, {r, count:r.done?1:0, done:r.done});
+  });
+  host.innerHTML = [...seen.values()].map(({r,count,done})=>`
+    <div class="citem">
+      <span class="check ${done?"done":""}">${done?"✓":""}</span>
+      <b>Bus ${r.num}</b> <span style="color:#6f6d67">— ${r.dir}</span>
+      <small>${done?(count>1?`done ×${count}`:"done"):"what's next"}</small>
+    </div>`).join("");
+}
+const todos = ["Catch bus 36 from Changi at sunrise","Bring the bingo card on the next ride"];
+function renderTodos(){
+  const host = document.getElementById("todoList");
+  host.innerHTML = todos.map((t,i)=>`
+    <div class="citem todo-item"><span class="check" style="border-style:dashed"></span>${escapeHTML(t)}
+      <button onclick="removeTodo(${i})" aria-label="Remove to-do">✕</button></div>`).join("")
+    || `<div style="color:#8a8881;font-size:14px">Nothing planned yet — add your first ride below.</div>`;
+}
+function addTodo(){
+  const inp = document.getElementById("todoInput");
+  const v = inp.value.trim();
+  if(!v) return;
+  todos.push(v); inp.value=""; S.todoAdded = true;
+  renderTodos(); renderBadges();
+}
+function removeTodo(i){ todos.splice(i,1); renderTodos(); }
+document.addEventListener("keydown",e=>{
+  if(e.key==="Enter" && document.activeElement?.id==="todoInput") addTodo();
+});
+
+/* ================= BADGES ================= */
+function renderBadges(){
+  const host = document.getElementById("badgeGrid");
+  host.innerHTML = BADGES.map(b=>{
+    const got = b.test(S);
+    return `<div class="badge ${got?"unlocked":"locked"}">
+      <span class="ico">${b.ico}</span><b>${b.name}</b><span>${b.desc}</span></div>`;
+  }).join("");
+}
+
+/* ================= BINGO ================= */
+function renderBingo(){
+  const host = document.getElementById("bingoGrid");
+  host.innerHTML = BINGO.map((b,i)=>`
+    <div class="bcell ${S.bingo.has(i)?"hit":""}" role="button" tabindex="0" onclick="hitBingo(${i})"
+      onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();hitBingo(${i})}">
+      <span class="bi">${b[0]}</span>${b[1]}</div>`).join("");
+}
+function hitBingo(i){
+  S.bingo.has(i) ? S.bingo.delete(i) : S.bingo.add(i);
+  renderBingo();
+  const msg = document.getElementById("bingoMsg");
+  if(S.bingo.size === 9 && !S.bingoDone){
+    S.bingoDone = true;
+    msg.textContent = "🎉 Full card! Front Row Rider unlocked.";
+    toast("🪟 Front Row Rider badge unlocked!");
+    renderBadges();
+  } else {
+    msg.textContent = S.bingo.size ? `${S.bingo.size}/9 spotted` : "";
+    if(S.bingo.size < 9) S.bingoDone = S.bingoDone; // keep badge once earned
+  }
+}
+
+/* ================= MY RIDES ================= */
+const expanded = {author:false, visitor:false};
+function rideListHTML(rows, key){
+  const LIMIT = 5;
+  const shown = expanded[key] ? rows : rows.slice(0, LIMIT);
+  const more = rows.length > LIMIT
+    ? `<button class="ghost" style="margin-top:8px;font-size:12px;padding:5px 10px" onclick="expanded.${key}=!expanded.${key};renderMyRides()">${expanded[key] ? "Show fewer ↑" : `Show all ${rows.length} ↓`}</button>` : "";
+  return `<div class="${expanded[key] ? "ridescroll" : ""}">${shown.join("")}</div>${more}`;
+}
+function renderMyRides(){
+  const done = ROUTES.filter(r=>r.done);
+  const aRows = ROUTES.map((r,i)=>({r,i})).filter(({r})=>r.done).map(({r,i})=>`
+    <div class="ride-row click" onclick="jumpToTrip(${i})" title="See this trip">
+      <span class="plate mini cond">${r.num}</span>
+      <div style="min-width:0;flex:1">
+        <div style="color:#55534d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.dir}</div>
+        ${tripSnippet(r)?`<div style="font-size:11.5px;color:#8a8881;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">⤷ ${tripSnippet(r)}</div>`:""}
+      </div>
+      <small>${r.date||""}</small></div>`);
+  document.getElementById("authorRides").innerHTML = done.length
+    ? rideListHTML(aRows, "author")
+    : `<div style="color:#8a8881;font-size:14px">No trips yet.</div>`;
+
+  const rides = [...S.rides].reverse();
+  const vRows = rides.map(({i,num,when,id})=>{
+      const r = ROUTES[i];
+      return `<div class="ride-row click" onclick="jumpToTrip(${i})" title="See this trip">
+        <span class="plate mini cond">${num}</span>
+        <div style="min-width:0;flex:1">
+          <div style="color:#55534d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r?r.dir:""}</div>
+          ${r&&tripSnippet(r)?`<div style="font-size:11.5px;color:#8a8881;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">⤷ ${tripSnippet(r)}</div>`:""}
+        </div>
+        <small>${when.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}</small>
+        <button class="rm" onclick="event.stopPropagation();removeRide(${id})" aria-label="Remove this ride">✕</button></div>`;
+    });
+  document.getElementById("visitorRides").innerHTML = rides.length
+    ? rideListHTML(vRows, "visitor")
+    : `<div style="color:#8a8881;font-size:14px">No rides yet — tap “🚌 I rode this route” on any trip to start your history.</div>`;
+}
+
+/* ================= TOAST ================= */
+let toastTimer;
+function toast(msg){
+  const t = document.getElementById("toast");
+  t.textContent = msg; t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>t.classList.remove("show"), 2600);
+}
+
+/* ================= BOOT ================= */
+renderStats(); renderRoutes(); renderChecklist(); renderTodos(); renderBadges(); renderBingo(); renderMyRides(); initMap();
+</script>
+</body>
+</html>
