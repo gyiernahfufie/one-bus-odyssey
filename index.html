@@ -66,6 +66,8 @@
   .mapfocusbar{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--ink);color:#fff;padding:8px 8px 8px 14px;border-radius:10px;margin-bottom:8px;font-size:13px;font-weight:600}
   .mapfocusbar button{background:var(--pole);color:var(--ink);border-color:var(--ink);font-size:12px;padding:6px 10px;flex:none}
   .busstop-icon{width:26px;height:26px;background:var(--pole);border:2px solid var(--ink);border-radius:7px;display:flex;align-items:center;justify-content:center;font-size:14px;box-shadow:1.5px 1.5px 0 var(--ink)}
+  .draftpt{width:12px;height:12px;border-radius:50%;background:var(--signal);border:2px solid #fff;box-shadow:0 0 0 1.5px var(--signal);cursor:pointer}
+  .draftplace{width:18px;height:18px;border-radius:50%;background:var(--sbs);border:2.5px solid #fff;box-shadow:0 0 0 1.5px var(--sbs);cursor:grab}
 
   /* ---------- route plates ---------- */
   .plate{
@@ -339,7 +341,7 @@
       <div class="frow"><label>New ground</label><input id="f_ng" placeholder="e.g. +12% new ground"></div>
       <div class="frow"><label>Route line *</label>
         <div class="inline">
-          <button class="ghost" onclick="armRoute()">🖊 Draw on map</button>
+          <button class="ghost" id="drawBtn" onclick="armRoute()">🖊 Draw on map</button>
           <button class="ghost" onclick="undoRoutePt()">Undo point</button>
           <button class="ghost" onclick="clearRoutePts()">Clear</button>
           <button class="ghost" onclick="trimToStops()">✂️ Trim to my stops</button>
@@ -918,12 +920,39 @@ function redrawDraft(){
   draftGroup.clearLayers();
   if(draftCoords.length >= 2)
     L.polyline(draftCoords, { color:"#e4452b", weight:4, dashArray:"4 6" }).addTo(draftGroup);
-  draftCoords.forEach(p => L.circleMarker(p, { radius:4, color:"#e4452b", fillOpacity:1 }).addTo(draftGroup));
+  const dot = cls => L.divIcon({ className:"", html:`<div class="${cls}"></div>`,
+    iconSize: cls === "draftplace" ? [18,18] : [12,12],
+    iconAnchor: cls === "draftplace" ? [9,9] : [6,6] });
+  draftCoords.forEach((p, i) => {
+    const m = L.marker(p, { draggable:true, icon: dot("draftpt") }).addTo(draftGroup);
+    m.bindTooltip("Drag to adjust · tap to remove");
+    m.on("click", () => { draftCoords.splice(i, 1); redrawDraft(); updRouteCount(); });
+    m.on("dragend", e => {
+      const ll = e.target.getLatLng();
+      draftCoords[i] = [+ll.lat.toFixed(5), +ll.lng.toFixed(5)];
+      redrawDraft();
+    });
+  });
   draftStops.forEach(s => {
-    if(s.pos) L.circleMarker(s.pos, { radius:8, color:"#fff", weight:2, fillOpacity:1, fillColor:"#5b2d8e" })
-      .bindTooltip(s.name || "find").addTo(draftGroup);
-    if(s.stopPos) L.marker(s.stopPos, { icon: L.divIcon({ className:"", html:'<div class="busstop-icon">🚏</div>', iconSize:[26,26], iconAnchor:[13,13] }) })
-      .bindTooltip("Alight: " + (s.alightAt || "?")).addTo(draftGroup);
+    if(s.pos){
+      const m = L.marker(s.pos, { draggable:true, icon: dot("draftplace") }).addTo(draftGroup);
+      m.bindTooltip((s.name || "find") + " · drag to adjust");
+      m.on("dragend", e => {
+        const ll = e.target.getLatLng();
+        s.pos = [+ll.lat.toFixed(5), +ll.lng.toFixed(5)];
+        renderStopRows(); redrawDraft();
+      });
+    }
+    if(s.stopPos){
+      const m = L.marker(s.stopPos, { draggable:true, icon: L.divIcon({ className:"",
+        html:'<div class="busstop-icon">🚏</div>', iconSize:[26,26], iconAnchor:[13,13] }) }).addTo(draftGroup);
+      m.bindTooltip("Alight: " + (s.alightAt || "?") + " · drag to adjust");
+      m.on("dragend", e => {
+        const ll = e.target.getLatLng();
+        s.stopPos = [+ll.lat.toFixed(5), +ll.lng.toFixed(5)];
+        redrawDraft();
+      });
+    }
     if(s.pos && s.stopPos) L.polyline([s.stopPos, s.pos], { color:"#55534d", weight:2, dashArray:"2 6" }).addTo(draftGroup);
   });
 }
@@ -996,6 +1025,7 @@ async function autoRoute(){
     const svc = d.services[num];
     const codes = (svc && svc.routes) ? (svc.routes[svcDir] || svc.routes[0] || []) : [];
     codes.forEach(c => { const s = d.stops[c]; if(s) svcStops.push({ pos:[s[1], s[0]], name:s[2] }); });
+    disarm();
     redrawDraft();
     document.getElementById("routeCount").textContent =
       `${draftCoords.length} points · official · direction ${svcDir+1}/${enc.length}`;
@@ -1137,12 +1167,28 @@ function trimToStops(){
   if(map) map.fitBounds(L.polyline(draftCoords).getBounds(), { padding:[30,30] });
   toast("Line trimmed to the stretch you actually rode ✂️ — tap ⚡ to restore the full route");
 }
+function disarm(){
+  armMode = null;
+  document.getElementById("armHint").textContent = "";
+  const b = document.getElementById("drawBtn");
+  if(b){ b.textContent = "🖊 Draw on map"; b.style.background = ""; b.style.color = ""; }
+}
 function armRoute(){
-  armMode = armMode === "route" ? null : "route";
-  document.getElementById("armHint").textContent = armMode ? "Tap the map along the bus route, stop by stop." : "";
-  if(armMode) document.getElementById("map-sec").scrollIntoView({ behavior:"smooth" });
+  if(armMode === "route"){ disarm(); toast("Drawing mode off"); return; }
+  armMode = "route";
+  const b = document.getElementById("drawBtn");
+  b.textContent = "🛑 Stop drawing"; b.style.background = "var(--signal)"; b.style.color = "#fff";
+  document.getElementById("armHint").textContent = "Drawing mode ON — every map tap adds a route point. Tap “🛑 Stop drawing” or press Esc when done.";
+  document.getElementById("map-sec").scrollIntoView({ behavior:"smooth" });
+}
+document.addEventListener("keydown", e => {
+  if(e.key === "Escape" && armMode){ disarm(); toast("Drawing mode off"); }
+});
+function updRouteCount(suffix){
+  document.getElementById("routeCount").textContent = `${draftCoords.length} points${suffix||""}`;
 }
 function armStopPos(idx, type){
+  if(armMode === "route") disarm();
   armMode = { type, idx };
   document.getElementById("armHint").textContent =
     type === "place" ? "Tap the map where the place itself is." : "Tap the map where you alight (on the route line).";
@@ -1195,7 +1241,7 @@ function resetAdminForm(){
   renderStopRows(); redrawDraft();
   document.getElementById("routeCount").textContent = "0 points";
   document.getElementById("saveMsg").textContent = "";
-  document.getElementById("armHint").textContent = "";
+  disarm();
   setAdminMode(false);
 }
 function editTrip(id){
