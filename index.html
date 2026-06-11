@@ -273,7 +273,7 @@
   <section id="picker-sec">
     <h2>Route picker</h2>
     <div class="picker">
-      <p>Can't decide? Let the machine commit you to a bus before you board. House rule: whatever it lands on, you ride it.</p>
+      <p id="pickerDesc">Can't decide? Let the machine commit you to a bus before you board. House rule: whatever it lands on, you ride it.</p>
       <div class="pickerplate" id="pickerPlate">?</div>
       <button class="primary" id="spinBtn" onclick="spinPicker()" style="background:var(--pole);color:var(--ink);border-color:#fff">Spin the route</button>
       <div class="pickresult" id="pickResult"></div>
@@ -471,6 +471,7 @@ function applyAuth(){
   }
   document.getElementById("admin-sec").style.display = isAuthor ? "block" : "none";
   document.getElementById("navAdmin").style.display = isAuthor ? "inline-block" : "none";
+  updatePickerDesc();
 }
 async function authAction(){
   if(!sb){ toast("Database not reachable right now"); return; }
@@ -781,10 +782,26 @@ async function addComment(id){
 
 /* ================= PICKER ================= */
 let spinning = false;
+function pickerPool(){
+  if(isAuthor) return { pool: TRIPS.filter(t => !t.done), mode: "fog" };
+  const ridden = new Set(MY.rides.map(r => r.tripId));
+  let pool = TRIPS.filter(t => t.done && !ridden.has(t.id));
+  if(pool.length) return { pool, mode: "fresh" };
+  return { pool: TRIPS.filter(t => t.done), mode: "all" };
+}
+function updatePickerDesc(){
+  const el = document.getElementById("pickerDesc"); if(!el) return;
+  el.textContent = isAuthor
+    ? "Author mode: the picker draws from routes still in the fog — whatever it lands on is the next expedition. No backsies."
+    : "Can't decide which trip to follow? The picker draws from documented trips you haven't ridden yet. Whatever it lands on, that's your outing.";
+}
 function spinPicker(){
   if(spinning) return;
-  const pool = TRIPS.filter(t => !t.done);
-  if(!pool.length){ toast("No routes left in the fog — add more!"); return; }
+  const { pool, mode } = pickerPool();
+  if(!pool.length){
+    toast(isAuthor ? "No routes left in the fog — add some planned ones!" : "No documented trips to pick from yet");
+    return;
+  }
   spinning = true; setFlag("spun");
   const plate = document.getElementById("pickerPlate");
   const result = document.getElementById("pickResult");
@@ -798,7 +815,11 @@ function spinPicker(){
       clearInterval(iv); plate.classList.remove("spin"); spinning = false;
       const pick = pool[Math.floor(Math.random()*pool.length)];
       plate.textContent = pick.num;
-      result.textContent = `Fate says: Bus ${pick.num} — ${pick.dir}. No backsies.`;
+      result.textContent = isAuthor
+        ? `Fate says: Bus ${pick.num} — ${pick.dir}. That's the next trip to document.`
+        : (mode === "all"
+          ? `You've ridden them all! 🏆 Fate says ride Bus ${pick.num} again — ${pick.dir}.`
+          : `Fate says: follow Bus ${pick.num} — ${pick.dir}. No backsies.`);
       renderBadges();
     }
   }, 90);
@@ -933,10 +954,12 @@ function redrawDraft(){
       redrawDraft();
     });
   });
-  draftStops.forEach(s => {
+  draftStops.forEach((s, i) => {
     if(s.pos){
       const m = L.marker(s.pos, { draggable:true, icon: dot("draftplace") }).addTo(draftGroup);
-      m.bindTooltip((s.name || "find") + " · drag to adjust");
+      m.bindTooltip((s.name || "find") + " · drag to adjust · tap for options");
+      m.bindPopup(`<b>${escapeHTML(s.name || "find")}</b><br>
+        <button onclick="clearPlacePin(${i})" style="margin-top:6px">✕ Remove this pin</button>`);
       m.on("dragend", e => {
         const ll = e.target.getLatLng();
         s.pos = [+ll.lat.toFixed(5), +ll.lng.toFixed(5)];
@@ -946,10 +969,13 @@ function redrawDraft(){
     if(s.stopPos){
       const m = L.marker(s.stopPos, { draggable:true, icon: L.divIcon({ className:"",
         html:'<div class="busstop-icon">🚏</div>', iconSize:[26,26], iconAnchor:[13,13] }) }).addTo(draftGroup);
-      m.bindTooltip("Alight: " + (s.alightAt || "?") + " · drag to adjust");
+      m.bindTooltip("Alight: " + (s.alightAt || "?") + " · drag to adjust · tap for options");
+      m.bindPopup(`<b>🚏 ${escapeHTML(s.alightAt || "alight stop")}</b><br>
+        <button onclick="clearStopPin(${i})" style="margin-top:6px">✕ Remove this stop marker</button>`);
       m.on("dragend", e => {
         const ll = e.target.getLatLng();
         s.stopPos = [+ll.lat.toFixed(5), +ll.lng.toFixed(5)];
+        s._stopTyped = false;
         redrawDraft();
       });
     }
@@ -975,6 +1001,7 @@ function onMapClickDraft(e){
       }
     }
     draftStops[idx][type === "place" ? "pos" : "stopPos"] = placed;
+    if(type === "stop") draftStops[idx]._stopTyped = false;
     armMode = null;
     document.getElementById("armHint").textContent = "";
     redrawDraft(); renderStopRows();
@@ -1058,6 +1085,33 @@ async function findPlace(i){
   }catch(e){ toast("Place search failed: " + e.message); }
 }
 const normName = s => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+const STOP_ABBR = { church:"ch", road:"rd", station:"stn", opposite:"opp", before:"bef", after:"aft",
+  block:"blk", terminal:"ter", interchange:"int", avenue:"ave", street:"st", centre:"ctr", center:"ctr",
+  school:"sch", hospital:"hosp", market:"mkt", garden:"gdn", gardens:"gdns", building:"bldg",
+  upper:"upp", lorong:"lor", jalan:"jln", bukit:"bt", kampong:"kg", tanjong:"tg", saint:"st" };
+const canonStop = s => (s || "").toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/)
+  .filter(Boolean).map(w => STOP_ABBR[w] || w).join(" ");
+function matchStop(pool, typed, nearPos, maxKm){
+  const t = canonStop(typed);
+  if(!t || !pool.length) return null;
+  let cands = pool.filter(x => canonStop(x.name) === t);
+  if(!cands.length) cands = pool.filter(x => {
+    const cn = canonStop(x.name); return cn.includes(t) || t.includes(cn);
+  });
+  if(!cands.length){
+    const toks = t.split(" ");
+    cands = pool.filter(x => { const cn = canonStop(x.name); return toks.every(tok => cn.includes(tok)); });
+  }
+  if(!cands.length) return null;
+  if(nearPos) cands.sort((a,b) => distKm(nearPos, a.pos) - distKm(nearPos, b.pos));
+  if(maxKm && nearPos && distKm(nearPos, cands[0].pos) > maxKm) return null;
+  return cands[0];
+}
+let _allStops = null;
+function allStopsPool(){
+  if(!_allStops && BR) _allStops = Object.values(BR.stops).map(s => ({ pos:[s[1], s[0]], name:s[2] }));
+  return _allStops || [];
+}
 async function getServiceStops(num){
   const d = await loadBusData();
   const svc = d.services[num];
@@ -1111,11 +1165,12 @@ async function autoCompleteFinds(){
   let geocoded = 0, snapped = 0; const failed = [];
   for(const s of draftStops){
     if(!s.name) continue;
-    if(!s.pos){
+    if(!s.pos || s._linkTyped){
       const linkPos = parseGmapCoords(s.gmap);
-      if(linkPos){ s.pos = linkPos; geocoded++; }
+      if(linkPos){ s.pos = linkPos; s._linkTyped = false; geocoded++; }
       else if(s.gmap && !/^https?:/i.test(s.gmap)){
-        try{ const p2 = await oneMapSearch(s.gmap); if(p2){ s.pos = p2; s.gmap = ""; geocoded++; } }catch(e){}
+        try{ const p2 = await oneMapSearch(s.gmap);
+          if(p2){ s.pos = p2; s.gmap = ""; s._linkTyped = false; geocoded++; } }catch(e){}
       }
     }
     if(!s.pos){
@@ -1126,16 +1181,15 @@ async function autoCompleteFinds(){
       await new Promise(r => setTimeout(r, 1100)); // geocoder rate-limit politeness
     }
     if(!s.gmap) s.gmap = "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(s.name + " Singapore");
-    if(pool.length){
-      if(s.alightAt && !s.stopPos){
-        const m = pool.find(x => normName(x.name) === normName(s.alightAt));
-        if(m){ s.stopPos = m.pos; s.alightAt = m.name; snapped++; }
-      }
-      if(!s.stopPos && s.pos){
-        let best = null, bd = 1e9;
-        pool.forEach(x => { const d2 = distKm(s.pos, x.pos); if(d2 < bd){ bd = d2; best = x; } });
-        if(best && bd < 0.8){ s.stopPos = best.pos; if(!s.alightAt) s.alightAt = best.name; snapped++; }
-      }
+    if(s.alightAt && (!s.stopPos || s._stopTyped)){
+      let m = matchStop(pool, s.alightAt, s.pos);
+      if(!m) m = matchStop(allStopsPool(), s.alightAt, s.pos, s.pos ? 2 : 0);
+      if(m){ s.stopPos = m.pos; s.alightAt = m.name; s._stopTyped = false; snapped++; }
+    }
+    if(!s.stopPos && s.pos && pool.length){
+      let best = null, bd = 1e9;
+      pool.forEach(x => { const d2 = distKm(s.pos, x.pos); if(d2 < bd){ bd = d2; best = x; } });
+      if(best && bd < 0.8){ s.stopPos = best.pos; if(!s.alightAt) s.alightAt = best.name; snapped++; }
     }
   }
   renderStopRows(); redrawDraft();
@@ -1203,11 +1257,27 @@ function addStopRow(){
   renderStopRows();
 }
 function removeStopRow(i){ draftStops.splice(i,1); renderStopRows(); redrawDraft(); }
+function clearPlacePin(i){
+  if(!draftStops[i]) return;
+  draftStops[i].pos = null;
+  renderStopRows(); redrawDraft();
+  toast(`Pin cleared — use 🔍 Find or 📍 Set on map to place “${draftStops[i].name || "this find"}” again`);
+}
+function clearStopPin(i){
+  if(!draftStops[i]) return;
+  draftStops[i].stopPos = null;
+  renderStopRows(); redrawDraft();
+  toast("Alight marker cleared — 🚏 Set alight stop to place it again");
+}
 function insertStopRow(i){
   draftStops.splice(i + 1, 0, { name:"", photo:"📍", note:"", alightAt:"", gmap:"", alight:true, pos:null, stopPos:null });
   renderStopRows();
 }
-function dsUpd(i, k, v){ draftStops[i][k] = v; }
+function dsUpd(i, k, v){
+  draftStops[i][k] = v;
+  if(k === "alightAt") draftStops[i]._stopTyped = true;
+  if(k === "gmap") draftStops[i]._linkTyped = true;
+}
 function renderStopRows(){
   document.getElementById("stopRows").innerHTML = draftStops.map((s,i) => `
     <div class="stoprow">
@@ -1271,16 +1341,18 @@ async function saveTrip(){
   if(!num){ toast("Bus number is required"); return; }
   if(draftCoords.length < 2){ toast("Draw the route line on the map first (≥2 points)"); return; }
   const splitCsv = id => document.getElementById(id).value.split(",").map(s=>s.trim()).filter(Boolean);
-  if(draftStops.some(s => s.name && (!s.pos || !s.stopPos))){
+  if(draftStops.some(s => s.name)){
     document.getElementById("saveMsg").textContent = "Auto-filling positions…";
     const auto = await autoCompleteFinds();
     if(auto.failed.length && !confirm(`Couldn't locate: ${auto.failed.join(", ")}. Save without ${auto.failed.length>1?"them":"it"}? (Cancel to place manually first)`)){
       document.getElementById("saveMsg").textContent = ""; return;
     }
   }
-  const stops = draftStops.filter(s => s.name && s.pos);
-  stops.forEach(s => { if(!s.gmap) s.gmap =
-    "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(s.name + " Singapore"); });
+  const stops = draftStops.filter(s => s.name && s.pos).map(s => ({
+    name:s.name, photo:s.photo || "📍", note:s.note || "", alight:s.alight !== false,
+    alightAt:s.alightAt || "", pos:s.pos, stopPos:s.stopPos || null,
+    gmap: s.gmap || ("https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(s.name + " Singapore"))
+  }));
   const row = {
     num, done: document.getElementById("f_done").value === "true",
     dir: document.getElementById("f_dir").value.trim(),
