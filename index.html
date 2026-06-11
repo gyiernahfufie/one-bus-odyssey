@@ -326,10 +326,10 @@
   </section>
 
   <section id="admin-sec" style="display:none">
-    <h2>Add a trip</h2>
+    <h2 id="adminTitle">Add a trip</h2>
     <p class="sectionnote">Author only — visitors never see this. Fill it in, draw on the map, save. The trip is live for everyone instantly.</p>
     <div class="listbox adminform">
-      <div class="frow"><label>Bus no. *</label><input id="f_num" placeholder="e.g. 125"></div>
+      <div class="frow"><label>Bus no. *</label><div class="inline"><input id="f_num" placeholder="e.g. 125" style="max-width:110px"><button class="ghost" onclick="autoRoute()">⚡ Auto-load official route</button></div></div>
       <div class="frow"><label>Direction</label><input id="f_dir" placeholder="e.g. Pasir Ris ⇄ Kampong Bahru"></div>
       <div class="frow"><label>Date</label><input id="f_date" placeholder="e.g. Jun 2026"></div>
       <div class="frow"><label>Status</label><select id="f_done"><option value="true">Ridden</option><option value="false">Planned (in the fog)</option></select></div>
@@ -342,12 +342,17 @@
           <button class="ghost" onclick="armRoute()">🖊 Draw on map</button>
           <button class="ghost" onclick="undoRoutePt()">Undo point</button>
           <button class="ghost" onclick="clearRoutePts()">Clear</button>
+          <button class="ghost" onclick="trimToStops()">✂️ Trim to my stops</button>
           <span class="hint" id="routeCount">0 points</span>
         </div></div>
       <div id="stopRows"></div>
-      <button class="ghost" onclick="addStopRow()">+ Add a find (place you alighted for)</button>
+      <div class="inline">
+        <button class="ghost" onclick="addStopRow()">+ Add a find (place you alighted for)</button>
+        <button class="ghost" onclick="autoFillAll()">✨ Auto-fill all positions &amp; stops</button>
+      </div>
       <div class="inline" style="margin-top:14px">
-        <button class="primary" onclick="saveTrip()">💾 Save trip — publish it live</button>
+        <button class="primary" id="saveBtn" onclick="saveTrip()">💾 Save trip — publish it live</button>
+        <button class="ghost" id="cancelEditBtn" onclick="cancelEdit()" style="display:none">✕ Cancel edit</button>
         <span class="hint" id="saveMsg"></span>
       </div>
       <p class="hint" id="armHint" style="margin-top:8px;color:var(--signal);font-weight:700"></p>
@@ -359,6 +364,7 @@
 <footer>
   <div class="wrap">
     <div><b>One Bus Odyssey</b> — a one-person documentation project; everyone's welcome to follow.</div>
+    <div>Route data © LTA, via <a href="https://busrouter.sg" style="color:var(--pole)">BusRouter SG</a> · Place search © OpenStreetMap contributors</div>
     <div>Trips and comments live in a shared database — what you post stays. Your rides, badges, bingo and to-dos are saved on this device; sign in with your email to keep them across devices.</div>
   </div>
 </footer>
@@ -641,7 +647,7 @@ function renderRoutes(){
         <button class="ghost" data-undo="${t.id}" onclick="undoRide(${t.id})" style="display:${cnt?"inline-block":"none"}" title="Remove your latest ride on this trip">↩ Undo</button>
         <button class="ghost" onclick="viewTripOnMap(${t.id})">🗺️ View on map</button>
         <button class="ghost" onclick="toggleComments(${t.id})">💬 Comments (<span id="ccount-${t.id}">${commentCounts[t.id]||0}</span>)</button>
-        ${isAuthor?`<button class="ghost" onclick="deleteTrip(${t.id})" title="Delete this trip">🗑</button>`:""}
+        ${isAuthor?`<button class="ghost" onclick="editTrip(${t.id})" title="Edit this trip">✏️ Edit</button><button class="ghost" onclick="deleteTrip(${t.id})" title="Delete this trip">🗑</button>`:""}
         <span class="hint" style="align-self:center">🚌 <span id="riders-${t.id}">${riderCounts[t.id]||0}</span> rider${(riderCounts[t.id]||0)===1?"":"s"} followed</span>
       </div>
       <div class="comments" id="comments-${t.id}">
@@ -905,7 +911,7 @@ function renderMyRides(){
 }
 
 /* ================= ADMIN: ADD A TRIP ================= */
-let armMode = null, draftCoords = [], draftStops = [], draftGroup = null;
+let armMode = null, draftCoords = [], draftStops = [], draftGroup = null, editingTripId = null;
 function ensureDraftGroup(){ if(map && !draftGroup) draftGroup = L.layerGroup().addTo(map); }
 function redrawDraft(){
   if(!map) return; ensureDraftGroup();
@@ -929,12 +935,167 @@ function onMapClickDraft(e){
     document.getElementById("routeCount").textContent = `${draftCoords.length} points`;
   } else {
     const { type, idx } = armMode;
-    draftStops[idx][type === "place" ? "pos" : "stopPos"] = ll;
+    let placed = ll;
+    if(type === "stop" && svcStops.length){
+      let best = null, bd = 1e9;
+      svcStops.forEach(s => { const d = distKm(ll, s.pos); if(d < bd){ bd = d; best = s; } });
+      if(best && bd < 0.4){
+        placed = best.pos;
+        if(!draftStops[idx].alightAt) draftStops[idx].alightAt = best.name;
+        toast(`Snapped to 🚏 ${best.name}`);
+      }
+    }
+    draftStops[idx][type === "place" ? "pos" : "stopPos"] = placed;
     armMode = null;
     document.getElementById("armHint").textContent = "";
     redrawDraft(); renderStopRows();
     toast("Position set ✓");
   }
+}
+/* ---- Official data: BusRouter SG (LTA-derived) + OpenStreetMap geocoding ---- */
+let BR = null, svcStops = [], svcDir = 0, svcLoadedFor = null;
+async function loadBusData(){
+  if(BR) return BR;
+  toast("Fetching official bus data (one-time)…");
+  const base = "https://data.busrouter.sg/v1/";
+  const [routes, stops, services] = await Promise.all(
+    ["routes.min.json","stops.min.json","services.min.json"].map(f => fetch(base + f).then(r => r.json()))
+  );
+  BR = { routes, stops, services };
+  return BR;
+}
+function decodePolyline(str){
+  let pts = [], idx = 0, lat = 0, lng = 0;
+  while(idx < str.length){
+    for(let ref = 0; ref < 2; ref++){
+      let res = 0, shift = 0, b;
+      do{ b = str.charCodeAt(idx++) - 63; res |= (b & 31) << shift; shift += 5; } while(b >= 32);
+      const d = (res & 1) ? ~(res >> 1) : (res >> 1);
+      if(ref === 0) lat += d; else lng += d;
+    }
+    pts.push([+(lat/1e5).toFixed(5), +(lng/1e5).toFixed(5)]);
+  }
+  return pts;
+}
+function thinPts(pts){
+  if(pts.length <= 150) return pts;
+  const step = Math.ceil(pts.length / 150);
+  return pts.filter((_, i) => i % step === 0 || i === pts.length - 1);
+}
+async function autoRoute(){
+  const num = document.getElementById("f_num").value.trim().toUpperCase();
+  if(!num){ toast("Type the bus number first"); return; }
+  try{
+    const d = await loadBusData();
+    const enc = (d.routes[num] || []).filter(Boolean);
+    if(!enc.length){ toast(`No official data for bus ${num} — draw it manually`); return; }
+    svcDir = (svcLoadedFor === num) ? (svcDir + 1) % enc.length : 0;
+    svcLoadedFor = num;
+    draftCoords = thinPts(decodePolyline(enc[svcDir]));
+    svcStops = [];
+    const svc = d.services[num];
+    const codes = (svc && svc.routes) ? (svc.routes[svcDir] || svc.routes[0] || []) : [];
+    codes.forEach(c => { const s = d.stops[c]; if(s) svcStops.push({ pos:[s[1], s[0]], name:s[2] }); });
+    redrawDraft();
+    document.getElementById("routeCount").textContent =
+      `${draftCoords.length} points · official · direction ${svcDir+1}/${enc.length}`;
+    if(map && draftCoords.length > 1)
+      map.fitBounds(L.polyline(draftCoords).getBounds(), { padding:[30,30] });
+    const dirInput = document.getElementById("f_dir");
+    if(!dirInput.value && svcStops.length)
+      dirInput.value = `${svcStops[0].name} → ${svcStops[svcStops.length-1].name}`;
+    toast(enc.length > 1 ? `Bus ${num} loaded ✓ — tap ⚡ again for the opposite direction` : `Bus ${num} route loaded ✓`);
+  }catch(e){ toast("Couldn't fetch bus data: " + e.message); }
+}
+async function findPlace(i){
+  const name = (draftStops[i].name || "").trim();
+  if(!name){ toast("Type the place name first"); return; }
+  toast("Searching place…");
+  try{
+    const r = await fetch("https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=sg&q=" +
+      encodeURIComponent(name));
+    const js = await r.json();
+    if(!js.length){ toast(`Couldn't find “${name}” — use 📍 Set on map instead`); return; }
+    draftStops[i].pos = [+(+js[0].lat).toFixed(5), +(+js[0].lon).toFixed(5)];
+    if(!draftStops[i].gmap)
+      draftStops[i].gmap = "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(name + " Singapore");
+    renderStopRows(); redrawDraft();
+    if(map) map.setView(draftStops[i].pos, 16);
+    toast(`Found: ${js[0].display_name.split(",")[0]} ✓ — check the pin looks right`);
+  }catch(e){ toast("Place search failed: " + e.message); }
+}
+const normName = s => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+async function getServiceStops(num){
+  const d = await loadBusData();
+  const svc = d.services[num];
+  const out = [], seen = new Set();
+  ((svc && svc.routes) || []).forEach(dir => (dir || []).forEach(c => {
+    const s = d.stops[c];
+    if(s && !seen.has(c)){ seen.add(c); out.push({ pos:[s[1], s[0]], name:s[2] }); }
+  }));
+  return out;
+}
+async function geocodeName(name){
+  const r = await fetch("https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=sg&q=" +
+    encodeURIComponent(name));
+  const js = await r.json();
+  return js.length ? [+(+js[0].lat).toFixed(5), +(+js[0].lon).toFixed(5)] : null;
+}
+async function autoCompleteFinds(){
+  const num = document.getElementById("f_num").value.trim().toUpperCase();
+  let pool = svcStops;
+  if(num){ try{ const all = await getServiceStops(num); if(all.length) pool = all; }catch(e){} }
+  let geocoded = 0, snapped = 0; const failed = [];
+  for(const s of draftStops){
+    if(!s.name) continue;
+    if(!s.pos){
+      try{
+        const p = await geocodeName(s.name);
+        if(p){ s.pos = p; geocoded++; } else failed.push(s.name);
+      }catch(e){ failed.push(s.name); }
+      await new Promise(r => setTimeout(r, 1100)); // geocoder rate-limit politeness
+    }
+    if(!s.gmap) s.gmap = "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(s.name + " Singapore");
+    if(pool.length){
+      if(s.alightAt && !s.stopPos){
+        const m = pool.find(x => normName(x.name) === normName(s.alightAt));
+        if(m){ s.stopPos = m.pos; s.alightAt = m.name; snapped++; }
+      }
+      if(!s.stopPos && s.pos){
+        let best = null, bd = 1e9;
+        pool.forEach(x => { const d2 = distKm(s.pos, x.pos); if(d2 < bd){ bd = d2; best = x; } });
+        if(best && bd < 0.8){ s.stopPos = best.pos; if(!s.alightAt) s.alightAt = best.name; snapped++; }
+      }
+    }
+  }
+  renderStopRows(); redrawDraft();
+  return { geocoded, snapped, failed };
+}
+async function autoFillAll(){
+  if(!draftStops.some(s => s.name)){ toast("Add a find with a place name first"); return; }
+  toast("Auto-filling — locating places & matching bus stops…");
+  const res = await autoCompleteFinds();
+  toast(`Done ✨ ${res.geocoded} place${res.geocoded!==1?"s":""} located, ${res.snapped} alight stop${res.snapped!==1?"s":""} set` +
+    (res.failed.length ? ` — couldn't find: ${res.failed.join(", ")} (use 📍 Set on map)` : ""));
+}
+function nearestIdx(pts, pos){
+  let bi = 0, bd = 1e9;
+  pts.forEach((p, i) => { const d = distKm(p, pos); if(d < bd){ bd = d; bi = i; } });
+  return bi;
+}
+function trimToStops(){
+  if(draftCoords.length < 3){ toast("Load or draw the route line first"); return; }
+  const anchors = draftStops.map(s => s.stopPos || s.pos).filter(Boolean);
+  if(!anchors.length){ toast("Add your finds (with positions) first — the trim follows them"); return; }
+  const idxs = anchors.map(a => nearestIdx(draftCoords, a));
+  let lo = Math.max(0, Math.min(...idxs) - 1);
+  let hi = Math.min(draftCoords.length - 1, Math.max(...idxs) + 1);
+  if(hi - lo < 1){ toast("Stops are too close together to trim meaningfully"); return; }
+  draftCoords = draftCoords.slice(lo, hi + 1);
+  redrawDraft();
+  document.getElementById("routeCount").textContent = `${draftCoords.length} points · trimmed to your journey`;
+  if(map) map.fitBounds(L.polyline(draftCoords).getBounds(), { padding:[30,30] });
+  toast("Line trimmed to the stretch you actually rode ✂️ — tap ⚡ to restore the full route");
 }
 function armRoute(){
   armMode = armMode === "route" ? null : "route";
@@ -971,17 +1132,64 @@ function renderStopRows(){
         <input value="${escapeHTML(s.gmap)}" oninput="dsUpd(${i},'gmap',this.value)" placeholder="Google Maps link (optional)">
       </div>
       <div class="inline">
-        <button class="ghost" onclick="armStopPos(${i},'place')">📍 Set place on map ${s.pos?"✓":""}</button>
+        <button class="ghost" onclick="findPlace(${i})">🔍 Find place by name ${s.pos?"✓":""}</button>
+        <button class="ghost" onclick="armStopPos(${i},'place')">📍 Set on map</button>
         <button class="ghost" onclick="armStopPos(${i},'stop')">🚏 Set alight stop ${s.stopPos?"✓":""}</button>
       </div>
     </div>`).join("");
 }
+function setAdminMode(editing, num){
+  document.getElementById("adminTitle").textContent = editing ? `Editing bus ${num}` : "Add a trip";
+  document.getElementById("saveBtn").textContent = editing ? "💾 Update trip" : "💾 Save trip — publish it live";
+  document.getElementById("cancelEditBtn").style.display = editing ? "inline-block" : "none";
+}
+function resetAdminForm(){
+  ["f_num","f_dir","f_date","f_vibes","f_areas","f_best","f_ng"].forEach(id => document.getElementById(id).value = "");
+  document.getElementById("f_done").value = "true";
+  draftCoords = []; draftStops = []; editingTripId = null;
+  renderStopRows(); redrawDraft();
+  document.getElementById("routeCount").textContent = "0 points";
+  document.getElementById("saveMsg").textContent = "";
+  document.getElementById("armHint").textContent = "";
+  setAdminMode(false);
+}
+function editTrip(id){
+  const t = tripById(id); if(!t || !isAuthor) return;
+  editingTripId = id;
+  document.getElementById("f_num").value = t.num;
+  document.getElementById("f_dir").value = t.dir || "";
+  document.getElementById("f_date").value = t.date || "";
+  document.getElementById("f_done").value = t.done ? "true" : "false";
+  document.getElementById("f_vibes").value = (t.vibes||[]).join(", ");
+  document.getElementById("f_areas").value = (t.areas||[]).join(", ");
+  document.getElementById("f_best").value = t.best || "";
+  document.getElementById("f_ng").value = t.newground || "";
+  draftCoords = (t.coords||[]).map(p => [...p]);
+  draftStops = (t.stops||[]).map(s => ({ name:s.name||"", photo:s.photo||"📍", note:s.note||"",
+    alightAt:s.alightAt||"", gmap:s.gmap||"", alight:s.alight!==false,
+    pos:s.pos?[...s.pos]:null, stopPos:s.stopPos?[...s.stopPos]:null }));
+  renderStopRows(); redrawDraft();
+  document.getElementById("routeCount").textContent = `${draftCoords.length} points`;
+  setAdminMode(true, t.num);
+  document.getElementById("admin-sec").scrollIntoView({ behavior:"smooth" });
+  toast("Loaded for editing — the route and pins are on the map");
+}
+function cancelEdit(){ resetAdminForm(); toast("Edit cancelled — nothing changed"); }
 async function saveTrip(){
   const num = document.getElementById("f_num").value.trim();
   if(!num){ toast("Bus number is required"); return; }
   if(draftCoords.length < 2){ toast("Draw the route line on the map first (≥2 points)"); return; }
   const splitCsv = id => document.getElementById(id).value.split(",").map(s=>s.trim()).filter(Boolean);
+  if(draftStops.some(s => s.name && (!s.pos || !s.stopPos))){
+    document.getElementById("saveMsg").textContent = "Auto-filling positions…";
+    const auto = await autoCompleteFinds();
+    if(auto.failed.length && !confirm(`Couldn't locate: ${auto.failed.join(", ")}. Save without ${auto.failed.length>1?"them":"it"}? (Cancel to place manually first)`)){
+      document.getElementById("saveMsg").textContent = ""; return;
+    }
+  }
   const stops = draftStops.filter(s => s.name && s.pos);
+  stops.forEach(s => { if(!s.gmap) s.gmap =
+    "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(s.name + " Singapore"); });
   const row = {
     num, done: document.getElementById("f_done").value === "true",
     dir: document.getElementById("f_dir").value.trim(),
@@ -992,21 +1200,23 @@ async function saveTrip(){
     coords: draftCoords, stops
   };
   document.getElementById("saveMsg").textContent = "Saving…";
-  const { error } = await sb.from("trips").insert(row);
+  const wasEditing = editingTripId;
+  const { error } = wasEditing
+    ? await sb.from("trips").update(row).eq("id", wasEditing)
+    : await sb.from("trips").insert(row);
   if(error){ document.getElementById("saveMsg").textContent = ""; toast("Couldn't save: " + error.message); return; }
-  ["f_num","f_dir","f_date","f_vibes","f_areas","f_best","f_ng"].forEach(id => document.getElementById(id).value = "");
-  draftCoords = []; draftStops = []; renderStopRows(); redrawDraft();
-  document.getElementById("routeCount").textContent = "0 points";
-  document.getElementById("saveMsg").textContent = "";
+  resetAdminForm();
+  loadedComments.delete(wasEditing);
   await loadTrips(); await loadCounts();
   renderAll();
-  toast(`Bus ${num} is live 🚌 — everyone can see it now`);
+  toast(wasEditing ? `Bus ${num} updated ✓ — changes are live` : `Bus ${num} is live 🚌 — everyone can see it now`);
 }
 async function deleteTrip(id){
   const t = tripById(id);
   if(!confirm(`Delete the bus ${t?.num} trip? This also removes its comments and ride logs. This can't be undone.`)) return;
   const { error } = await sb.from("trips").delete().eq("id", id);
   if(error){ toast("Couldn't delete: " + error.message); return; }
+  if(editingTripId === id) resetAdminForm();
   await loadTrips(); await loadCounts(); await loadMyRides();
   renderAll();
   toast("Trip deleted");
