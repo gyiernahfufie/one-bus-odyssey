@@ -162,11 +162,6 @@
   .check.done{background:var(--go);border-color:var(--go)}
   .citem small{color:#8a8881;margin-left:auto;white-space:nowrap}
 
-  /* todo */
-  .todoform{display:flex;gap:8px;margin-top:12px}
-  .todoform input{flex:1;font:inherit;font-size:14px;padding:9px 10px;border:1px solid var(--line);border-radius:8px}
-  .todo-item button{padding:2px 8px;font-size:12px;border-width:1px;margin-left:auto}
-
   /* ---------- badges ---------- */
   .badges{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px}
   .badge{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px 12px;text-align:center;transition:filter .2s}
@@ -177,11 +172,11 @@
   .badge.unlocked{border-color:var(--pole);box-shadow:0 0 0 3px #ffe9a8}
 
   /* ---------- bingo ---------- */
-  .bingo{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;max-width:480px}
+  .bingo{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;max-width:560px}
   .bcell{aspect-ratio:1;background:var(--panel);border:1.5px solid var(--line);border-radius:10px;
     display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
-    cursor:pointer;font-size:12px;text-align:center;padding:6px;user-select:none;font-weight:600;color:#55534d}
-  .bcell .bi{font-size:26px}
+    cursor:pointer;font-size:11.5px;text-align:center;padding:5px;user-select:none;font-weight:600;color:#55534d}
+  .bcell .bi{font-size:22px}
   .bcell.hit{background:var(--pole);border-color:var(--ink);color:var(--ink)}
   .bingomsg{margin-top:10px;font-weight:700;color:var(--go);min-height:20px;font-size:14px}
 
@@ -281,20 +276,10 @@
   </section>
 
   <section id="check-sec">
-    <h2>Checklist &amp; to-do</h2>
-    <div class="twocol">
-      <div class="listbox">
-        <h3>Route checklist</h3>
-        <div id="checkDone"></div>
-      </div>
-      <div class="listbox">
-        <h3>Your trip to-do <span style="font-weight:400;text-transform:none;letter-spacing:0">(plan your own ride)</span></h3>
-        <div id="todoList"></div>
-        <div class="todoform">
-          <input id="todoInput" type="text" placeholder="e.g. Try bus 36 from the airport" aria-label="Add a to-do">
-          <button onclick="addTodo()">Add</button>
-        </div>
-      </div>
+    <h2>Route checklist</h2>
+    <div class="listbox">
+      <h3>Every route, one line</h3>
+      <div id="checkDone"></div>
     </div>
   </section>
 
@@ -367,7 +352,7 @@
   <div class="wrap">
     <div><b>One Bus Odyssey</b> — a one-person documentation project; everyone's welcome to follow.</div>
     <div>Route data © LTA, via <a href="https://busrouter.sg" style="color:var(--pole)">BusRouter SG</a> · Place search © OpenStreetMap contributors &amp; OneMap (SLA)</div>
-    <div>Trips and comments live in a shared database — what you post stays. Your rides, badges, bingo and to-dos are saved on this device; sign in with your email to keep them across devices.</div>
+    <div>Trips and comments live in a shared database — what you post stays. Your rides, badges and bingo are saved on this device; sign in with your email to keep them across devices.</div>
   </div>
 </footer>
 
@@ -385,8 +370,7 @@ let TRIPS = [];                 // rows from db (normalized)
 let session = null, isAuthor = false;
 let commentCounts = {}, riderCounts = {};
 const loadedComments = new Set();
-let MY = { rides: [], bingo: new Set(), flags: {} }; // flags: bingoDone, commented, todoAdded, spun
-let todos = [];
+let MY = { rides: [], bingo: new Set(), flags: {} }; // flags: bingoDone, commented, spun
 
 /* Device storage, guarded (works on the hosted site; harmless if blocked) */
 const store = {
@@ -402,20 +386,32 @@ function escapeHTML(s){ const d = document.createElement("div"); d.textContent =
 
 /* ================= BADGES & BINGO DATA ================= */
 const BINGO = [
-  ["🐈","A kopitiam cat"],["🛒","A wet market"],["🎨","A wall mural"],
-  ["🏪","Old provision shop"],["⛩️","Temple or mosque"],["🌳","Giant rain tree"],
-  ["🚲","Uncle on a bicycle"],["🏗️","HDB under construction"],["🛕","Void deck wedding/funeral"]
+  ["🐈","A kopitiam cat"],["🛒","A wet market"],["🎨","A wall mural"],["🏪","Old provision shop"],
+  ["⛩️","Temple or mosque"],["🌳","Giant rain tree"],["🚲","Uncle on a bicycle"],["🏗️","HDB under construction"],
+  ["🛕","Void deck wedding/funeral"],["🛻","Karang guni truck"],["🌧️","Sudden downpour"],["🎒","Schoolkids in uniform"],
+  ["🐦","Mynah scolding someone"],["🚇","MRT crossing overhead"],["🧱","Mosaic playground"],["💈","Old-school barber"]
 ];
+const rideVibe = v => MY.rides.some(r => (tripById(r.tripId)?.vibes||[]).includes(v));
+const riddenAreas = () => { const s = new Set();
+  MY.rides.forEach(r => (tripById(r.tripId)?.areas||[]).forEach(a => s.add(a))); return s; };
 const BADGES = [
-  {id:"first",   ico:"🚌", name:"First Follow",    desc:"Log your first ride",                 test:()=>MY.rides.length>=1},
-  {id:"explorer",ico:"🧭", name:"Explorer",        desc:"Ride 3 different routes",             test:()=>rideNums().size>=3},
-  {id:"repeat",  ico:"🔁", name:"Repeat Rider",    desc:"Ride the same route twice — new alighting points count!", test:()=>[...rideNums()].some(n=>numRideCount(n)>=2)},
-  {id:"coastal", ico:"🌊", name:"Coastal Cruiser", desc:"Ride a coastal-vibe route",           test:()=>MY.rides.some(r=>(tripById(r.tripId)?.vibes||[]).includes("Coastal"))},
-  {id:"hawker",  ico:"🍜", name:"Hawker Hunter",   desc:"Ride a food-heavy route",             test:()=>MY.rides.some(r=>(tripById(r.tripId)?.vibes||[]).includes("Food-heavy"))},
-  {id:"bingo",   ico:"🪟", name:"Front Row Rider", desc:"Complete the bus bingo card",         test:()=>!!MY.flags.bingoDone},
-  {id:"voice",   ico:"💬", name:"Conductor",       desc:"Leave a comment on any route",        test:()=>!!MY.flags.commented},
-  {id:"planner", ico:"📝", name:"Trip Planner",    desc:"Add a to-do for your own ride",       test:()=>!!MY.flags.todoAdded},
-  {id:"lucky",   ico:"🎰", name:"Fate Rider",      desc:"Spin the route picker",               test:()=>!!MY.flags.spun}
+  {id:"first",   ico:"🚌", name:"First Follow",     desc:"Log your first ride",                  test:()=>MY.rides.length>=1},
+  {id:"five",    ico:"🎫", name:"Season Pass",      desc:"Log 5 rides",                          test:()=>MY.rides.length>=5},
+  {id:"ten",     ico:"🚍", name:"Bus Captain",      desc:"Log 10 rides",                         test:()=>MY.rides.length>=10},
+  {id:"explorer",ico:"🧭", name:"Explorer",         desc:"Ride 3 different routes",              test:()=>rideNums().size>=3},
+  {id:"repeat",  ico:"🔁", name:"Repeat Rider",     desc:"Ride the same route twice — new alighting points count!", test:()=>[...rideNums()].some(n=>numRideCount(n)>=2)},
+  {id:"complete",ico:"🏆", name:"Full Network",     desc:"Ride every documented trip",           test:()=>{const d=TRIPS.filter(t=>t.done); return d.length>0 && d.every(t=>MY.rides.some(r=>r.tripId===t.id));}},
+  {id:"coastal", ico:"🌊", name:"Coastal Cruiser",  desc:"Ride a coastal-vibe route",            test:()=>rideVibe("Coastal")},
+  {id:"hawker",  ico:"🍜", name:"Hawker Hunter",    desc:"Ride a food-heavy route",              test:()=>rideVibe("Food-heavy")},
+  {id:"heart",   ico:"🏘️", name:"Heartlander",      desc:"Ride a heartland-vibe route",          test:()=>rideVibe("Heartland")},
+  {id:"areas",   ico:"🗺️", name:"Kampong Collector",desc:"Your rides span 10+ neighbourhoods",   test:()=>riddenAreas().size>=10},
+  {id:"early",   ico:"🌅", name:"First Bus",        desc:"Log a ride before 7am",                test:()=>MY.rides.some(r=>r.when.getHours()<7)},
+  {id:"night",   ico:"🌙", name:"Night Rider",      desc:"Log a ride after 10pm",                test:()=>MY.rides.some(r=>r.when.getHours()>=22)},
+  {id:"weekend", ico:"🎪", name:"Weekend Wanderer", desc:"Log a ride on a weekend",              test:()=>MY.rides.some(r=>[0,6].includes(r.when.getDay()))},
+  {id:"regular", ico:"📅", name:"Regular",          desc:"Ride on 3 different days",             test:()=>new Set(MY.rides.map(r=>r.when.toDateString())).size>=3},
+  {id:"bingo",   ico:"🪟", name:"Front Row Rider",  desc:"Complete the bus bingo card",          test:()=>!!MY.flags.bingoDone},
+  {id:"voice",   ico:"💬", name:"Conductor",        desc:"Leave a comment on any route",         test:()=>!!MY.flags.commented},
+  {id:"lucky",   ico:"🎰", name:"Fate Rider",       desc:"Spin the route picker",                test:()=>!!MY.flags.spun}
 ];
 function setFlag(name){ MY.flags[name] = true; store.set("obo_flags", MY.flags); }
 
@@ -649,6 +645,7 @@ function renderRoutes(){
           ${cnt?`✓ Ridden ×${cnt} — log another`:"🚌 I rode this route"}</button>
         <button class="ghost" data-undo="${t.id}" onclick="undoRide(${t.id})" style="display:${cnt?"inline-block":"none"}" title="Remove your latest ride on this trip">↩ Undo</button>
         <button class="ghost" onclick="viewTripOnMap(${t.id})">🗺️ View on map</button>
+        <button class="ghost" onclick="shareTrip(${t.id})">🔗 Share</button>
         <button class="ghost" onclick="toggleComments(${t.id})">💬 Comments (<span id="ccount-${t.id}">${commentCounts[t.id]||0}</span>)</button>
         ${isAuthor?`<button class="ghost" onclick="editTrip(${t.id})" title="Edit this trip">✏️ Edit</button><button class="ghost" onclick="deleteTrip(${t.id})" title="Delete this trip">🗑</button>`:""}
         <span class="hint" style="align-self:center">🚌 <span id="riders-${t.id}">${riderCounts[t.id]||0}</span> rider${(riderCounts[t.id]||0)===1?"":"s"} followed</span>
@@ -841,27 +838,6 @@ function renderChecklist(){
       <small>${done?(count>1?`done ×${count}`:"done"):"what's next"}</small>
     </div>`).join("") || `<div style="color:#8a8881;font-size:14px">Nothing yet.</div>`;
 }
-function renderTodos(){
-  const host = document.getElementById("todoList");
-  host.innerHTML = todos.map((t,i) => `
-    <div class="citem todo-item"><span class="check" style="border-style:dashed"></span>${escapeHTML(t)}
-      <button onclick="removeTodo(${i})" aria-label="Remove to-do">✕</button></div>`).join("")
-    || `<div style="color:#8a8881;font-size:14px">Nothing planned yet — add your first ride below.</div>`;
-}
-function addTodo(){
-  const inp = document.getElementById("todoInput");
-  const v = inp.value.trim();
-  if(!v) return;
-  todos.push(v); inp.value = "";
-  store.set("obo_todos", todos);
-  setFlag("todoAdded");
-  renderTodos(); renderBadges();
-}
-function removeTodo(i){ todos.splice(i,1); store.set("obo_todos", todos); renderTodos(); }
-document.addEventListener("keydown", e => {
-  if(e.key === "Enter" && document.activeElement?.id === "todoInput") addTodo();
-});
-
 /* ================= BADGES ================= */
 function renderBadges(){
   document.getElementById("badgeGrid").innerHTML = BADGES.map(b => {
@@ -883,13 +859,13 @@ function hitBingo(i){
   store.set("obo_bingo", [...MY.bingo]);
   renderBingo();
   const msg = document.getElementById("bingoMsg");
-  if(MY.bingo.size === 9 && !MY.flags.bingoDone){
+  if(MY.bingo.size === BINGO.length && !MY.flags.bingoDone){
     setFlag("bingoDone");
     msg.textContent = "🎉 Full card! Front Row Rider unlocked.";
     toast("🪟 Front Row Rider badge unlocked!");
     renderBadges();
   } else {
-    msg.textContent = MY.bingo.size ? `${MY.bingo.size}/9 spotted` : "";
+    msg.textContent = MY.bingo.size ? `${MY.bingo.size}/${BINGO.length} spotted` : "";
   }
 }
 
@@ -1385,6 +1361,25 @@ async function deleteTrip(id){
   toast("Trip deleted");
 }
 
+/* ================= SHARE & DEEP LINKS ================= */
+async function shareTrip(id){
+  const t = tripById(id); if(!t) return;
+  const url = location.origin + location.pathname + "#trip-" + id;
+  if(navigator.share){
+    try{ await navigator.share({ title:`Bus ${t.num} · One Bus Odyssey`,
+      text:`Bus ${t.num} — ${t.dir}. Follow this trip:`, url }); return; }catch(e){ /* user cancelled */ }
+  }
+  try{ await navigator.clipboard.writeText(url); toast("Link copied — paste it anywhere 🔗"); }
+  catch(e){ prompt("Copy this link:", url); }
+}
+function handleDeepLink(){
+  if(!location.hash.startsWith("#trip-")) return;
+  const id = +location.hash.slice(6);
+  if(!tripById(id)) return;
+  jumpToTrip(id);
+  setTimeout(() => focusTrip(id), 500);
+}
+
 /* ================= TOAST ================= */
 let toastTimer;
 function toast(msg){
@@ -1396,14 +1391,13 @@ function toast(msg){
 
 /* ================= RENDER ALL + BOOT ================= */
 function renderAll(){
-  renderStats(); renderRoutes(); renderChecklist(); renderTodos();
+  renderStats(); renderRoutes(); renderChecklist();
   renderBadges(); renderMyRides(); rebuildMapLines();
 }
 (async function boot(){
-  todos = store.get("obo_todos", ["Catch bus 36 from Changi at sunrise", "Bring the bingo card on the next ride"]);
   MY.bingo = new Set(store.get("obo_bingo", []));
   MY.flags = store.get("obo_flags", {});
-  renderBingo(); renderTodos();
+  renderBingo();
   initMap();
   if(!sb){
     document.getElementById("routeCards").innerHTML =
@@ -1415,6 +1409,7 @@ function renderAll(){
     await Promise.all([loadTrips(), loadCounts()]);
     await loadMyRides();
     renderAll();
+    handleDeepLink();
   }catch(err){
     document.getElementById("routeCards").innerHTML =
       `<div style="color:#8a8881;padding:20px;text-align:center">Couldn't reach the trip database (${escapeHTML(err.message||"network error")}).<br>If this is a fresh setup, make sure the SQL script has been run in Supabase.</div>`;
