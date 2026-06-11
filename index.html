@@ -6,6 +6,7 @@
 <title>One Bus Odyssey — Singapore, one route at a time</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   :root{
     --ink:#1d1c22;
@@ -188,6 +189,17 @@
     border:2px solid var(--pole);opacity:0;transition:all .3s ease;z-index:2000;pointer-events:none;max-width:90vw;text-align:center}
   #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 
+  .authrow{margin-top:16px;display:flex;gap:12px;align-items:center;font-size:13px;color:#b8b6b0}
+  .authrow button{font-size:12px;padding:7px 14px;background:transparent;color:#fff;border-color:#6f6d67}
+  .authrow button:hover{border-color:var(--pole)}
+  .adminform .frow{display:grid;grid-template-columns:110px 1fr;gap:10px;align-items:center;margin-bottom:10px}
+  @media(max-width:700px){.adminform .frow{grid-template-columns:1fr;gap:4px}}
+  .adminform input,.adminform select{font:inherit;font-size:14px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;width:100%}
+  .adminform label{font-size:12px;font-weight:700;color:#55534d;text-transform:uppercase;letter-spacing:.06em}
+  .inline{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .stoprow{border:1px dashed var(--line);border-radius:10px;padding:10px;margin:10px 0;display:grid;gap:8px}
+  .stoprow input{flex:1;min-width:120px}
+
   footer{background:var(--ink);color:#b8b6b0;padding:26px 20px;font-size:13px;border-top:6px solid var(--pole)}
   footer .wrap{display:grid;gap:6px}
   footer b{color:#fff}
@@ -200,6 +212,7 @@
     <div class="eyebrow">Singapore · one route per trip · no transfers</div>
     <h1>One Bus <span class="num">Odyssey</span></h1>
     <p class="sub">I'm exploring Singapore one bus route at a time — board, ride, hop off wherever it looks fun. Follow along, ride the routes yourself, tick off the bingo and earn badges.</p>
+    <div class="authrow"><button id="authBtn" onclick="authAction()">✉️ Sign in</button><span id="authStatus"></span></div>
     <div class="stats">
       <div class="stat"><b id="stRoutes">0</b><span>Routes ridden</span></div>
       <div class="stat"><b id="stStops">0</b><span>Hop-off finds</span></div>
@@ -218,6 +231,7 @@
     <a href="#myrides-sec">My rides</a>
     <a href="#badges-sec">Badges</a>
     <a href="#bingo-sec">Bus bingo</a>
+    <a href="#admin-sec" id="navAdmin" style="display:none;color:var(--pole)">+ Add trip</a>
   </div>
 </nav>
 
@@ -311,312 +325,331 @@
     <div class="bingomsg" id="bingoMsg"></div>
   </section>
 
+  <section id="admin-sec" style="display:none">
+    <h2>Add a trip</h2>
+    <p class="sectionnote">Author only — visitors never see this. Fill it in, draw on the map, save. The trip is live for everyone instantly.</p>
+    <div class="listbox adminform">
+      <div class="frow"><label>Bus no. *</label><input id="f_num" placeholder="e.g. 125"></div>
+      <div class="frow"><label>Direction</label><input id="f_dir" placeholder="e.g. Pasir Ris ⇄ Kampong Bahru"></div>
+      <div class="frow"><label>Date</label><input id="f_date" placeholder="e.g. Jun 2026"></div>
+      <div class="frow"><label>Status</label><select id="f_done"><option value="true">Ridden</option><option value="false">Planned (in the fog)</option></select></div>
+      <div class="frow"><label>Vibes</label><input id="f_vibes" placeholder="comma separated, e.g. Food-heavy, Coastal"></div>
+      <div class="frow"><label>Areas</label><input id="f_areas" placeholder="neighbourhoods passed, comma separated"></div>
+      <div class="frow"><label>Best find</label><input id="f_best" placeholder="the one standout thing"></div>
+      <div class="frow"><label>New ground</label><input id="f_ng" placeholder="e.g. +12% new ground"></div>
+      <div class="frow"><label>Route line *</label>
+        <div class="inline">
+          <button class="ghost" onclick="armRoute()">🖊 Draw on map</button>
+          <button class="ghost" onclick="undoRoutePt()">Undo point</button>
+          <button class="ghost" onclick="clearRoutePts()">Clear</button>
+          <span class="hint" id="routeCount">0 points</span>
+        </div></div>
+      <div id="stopRows"></div>
+      <button class="ghost" onclick="addStopRow()">+ Add a find (place you alighted for)</button>
+      <div class="inline" style="margin-top:14px">
+        <button class="primary" onclick="saveTrip()">💾 Save trip — publish it live</button>
+        <span class="hint" id="saveMsg"></span>
+      </div>
+      <p class="hint" id="armHint" style="margin-top:8px;color:var(--signal);font-weight:700"></p>
+    </div>
+  </section>
+
 </main>
 
 <footer>
   <div class="wrap">
     <div><b>One Bus Odyssey</b> — a one-person documentation project; everyone's welcome to follow.</div>
-    <div>Demo note: follows, comments, to-dos and badges live in this page session and reset on refresh. Hooking them to a free comments/database service makes them permanent — that's the next step.</div>
+    <div>Trips and comments live in a shared database — what you post stays. Your rides, badges, bingo and to-dos are saved on this device; sign in with your email to keep them across devices.</div>
   </div>
 </footer>
 
 <div id="toast" role="status"></div>
 
 <script>
-/* ================= DATA ================= */
-const ROUTES = [
-  {
-    num: "125", done: true, date:"Jun 2026",
-    dir: "St Michael's Ter ↺ Sims Drive (loop)",
-    vibes: ["Food-heavy", "Heartland", "Loop service"],
-    areas: ["Whampoa", "Balestier", "Boon Keng", "Bendemeer", "Kallang", "MacPherson", "Aljunied", "Sims Drive", "Serangoon Road", "Kitchener Road"],
-    best: "Whampoa Drive food cluster — makan place and a traditional bakery within minutes of one stop.",
-    newground: "+10% new ground (est.) — first route through Whampoa & Kallang Way",
-    coords: [[1.3260,103.8556],[1.3262,103.8512],[1.3230,103.8550],[1.3170,103.8560],[1.3140,103.8620],[1.3203,103.8640],[1.3240,103.8700],[1.3270,103.8761],[1.3258,103.8810],[1.3210,103.8790]],
-    stops: [
-      {name:"Whampoa Makan Place", note:"Hawker classics by day, comes alive again after dark. Go hungry.", alight:true, alightAt:"Opp Balestier Point", photo:"🍜", pos:[1.3230,103.8550], stopPos:[1.3262,103.8512],
-       gmap:"https://www.google.com/maps/search/?api=1&query=Whampoa%20Makan%20Place&query_place_id=ChIJ41s8zx8Z2jERXqRSzEj-TcE"},
-      {name:"Sing Hon Loong Bakery", note:"Old-school traditional bakery on Whampoa Drive — soft loaves and $1+ curry buns.", alight:true, alightAt:"Opp Balestier Point", photo:"🍞", pos:[1.3226,103.8533], stopPos:[1.3262,103.8512],
-       gmap:"https://www.google.com/maps/search/?api=1&query=Sing%20Hon%20Loong%20Bakery&query_place_id=ChIJIxr-dtkZ2jERvsoyFYhWscw"},
-      {name:"Blk 34 Whampoa", note:"Hop off at Boon Keng and wander the old estate blocks.", alight:true, alightAt:"Boon Keng Stn", photo:"🏢", pos:[1.3203,103.8640], stopPos:[1.3196,103.8625],
-       gmap:"https://www.google.com/maps/search/?api=1&query=34%20Whampoa%20West&query_place_id=ChIJr7ZIxtMZ2jERedghBoRwMDM"},
-      {name:"Dolphin's Restaurant", note:"Retro old-school Western up in an industrial building on Genting Lane — free-flow coffee and soup. Closed Sundays.", alight:true, alightAt:"Tannery Blk", photo:"🍴", pos:[1.3270,103.8761], stopPos:[1.3277,103.8740],
-       gmap:"https://www.google.com/maps/search/?api=1&query=Dolphins%20Restaurant%20Genting%20Lane&query_place_id=ChIJdZntIAAX2jERe3mxACwCiOw"}
-    ],
-    comments: []
-  },
-  {
-    num: "12", done: true, date:"Mar 2026",
-    dir: "Pasir Ris ⇄ Kampong Bahru",
-    vibes: ["Heartland", "Food-heavy", "Old shophouses"],
-    areas: ["Pasir Ris","Geylang","Kallang","Bugis","Kampong Glam","Chinatown"],
-    best: "Geylang Serai Market at 9am — the putu piring stall two units from the escalator.",
-    newground: "+18% new ground when I rode it",
-    coords: [[1.373,103.949],[1.350,103.930],[1.317,103.893],[1.311,103.871],[1.300,103.855],[1.284,103.843],[1.276,103.839]],
-    stops: [
-      {name:"Geylang Serai Market", note:"Wet market upstairs, hawker food downstairs. Go hungry.", alight:true, photo:"🍢", pos:[1.317,103.897]},
-      {name:"Kallang Riverside", note:"Quiet stretch of river, old boat sheds. Nice 20-min walk.", alight:false, photo:"🌊", pos:[1.311,103.871]},
-      {name:"Bugis / Haji Lane", note:"Hop off before Victoria St jams. Murals + kopi.", alight:true, photo:"🎨", pos:[1.300,103.857]},
-      {name:"Chinatown (Upp Cross St)", note:"End-ish of the line. Temple, then biscuit shops on Sago St.", alight:true, photo:"🏮", pos:[1.284,103.843]}
-    ],
-    comments: [
-      {who:"Mei", text:"Did this last Sunday because of your post — the putu piring queue was worth it!"},
-      {who:"Raj", text:"Pro tip: sit upper deck left side for the Kallang view."}
-    ]
-  },
-  {
-    num: "174", done: true, date:"Apr 2026",
-    dir: "Boon Lay ⇄ Kampong Bahru",
-    vibes: ["Green", "Colonial core", "Long ride"],
-    areas: ["Boon Lay","Jurong","Clementi","Holland Village","Bukit Timah","Tanglin","Orchard","Chinatown"],
-    best: "Front-row upper deck through Holland Road — the rain trees close over the road like a tunnel.",
-    newground: "+22% new ground when I rode it",
-    coords: [[1.339,103.705],[1.332,103.743],[1.317,103.765],[1.307,103.790],[1.305,103.815],[1.304,103.832],[1.289,103.845],[1.276,103.839]],
-    stops: [
-      {name:"Holland Village", note:"Coffee stop. The XO carrot cake at the food centre.", alight:true, photo:"☕", pos:[1.311,103.794]},
-      {name:"Botanic Gardens (Napier Rd)", note:"Free entry, swans, and shade. Easy 1-hr detour.", alight:true, photo:"🌿", pos:[1.305,103.815]},
-      {name:"Orchard Road", note:"Stayed on — watched it through the window like a movie.", alight:false, photo:"🏙️", pos:[1.304,103.832]}
-    ],
-    comments: [
-      {who:"Wei Lin", text:"The rain tree tunnel is real. Took my parents on this one."}
-    ]
-  },
-  {
-    num: "851", done: true, date:"May 2026",
-    dir: "Bukit Batok ⇄ Yishun",
-    vibes: ["Heartland", "Reservoir", "Quiet"],
-    areas: ["Bukit Batok","Bukit Panjang","Mandai","Yishun"],
-    best: "Lower Seletar Reservoir at golden hour, ten minutes' walk from the Yishun end.",
-    newground: "+15% new ground when I rode it",
-    coords: [[1.349,103.749],[1.368,103.776],[1.380,103.800],[1.404,103.793],[1.418,103.820],[1.429,103.835]],
-    stops: [
-      {name:"Bukit Panjang (old line)", note:"Spot the LRT weaving overhead. Good kopitiam at the interchange.", alight:false, photo:"🚝", pos:[1.380,103.800]},
-      {name:"Lower Seletar Reservoir", note:"Boardwalk + sunset. Bring kopi peng.", alight:true, photo:"🌅", pos:[1.424,103.831]}
-    ],
-    comments: []
-  },
-  {
-    num: "36", done: false,
-    dir: "Changi Airport ⇄ Tomlinson Rd",
-    vibes: ["Coastal", "Skyline"],
-    areas: ["Changi","East Coast","Marine Parade","Marina Bay","City"],
-    best: "",
-    newground: "Est. +20% new ground — most of the East Coast stretch is still fog",
-    coords: [[1.357,103.988],[1.330,103.965],[1.305,103.920],[1.297,103.890],[1.292,103.875],[1.290,103.857]],
-    stops: [],
-    comments: [{who:"Adam", text:"Requesting this one next! Airport → city by the coast sounds great."}]
-  },
-  {
-    num: "67", done: false,
-    dir: "Choa Chu Kang ⇄ Tampines",
-    vibes: ["Cross-island", "Marathon route"],
-    areas: ["Choa Chu Kang","Bukit Panjang","Bukit Timah","Little India","Geylang","Tampines"],
-    best: "",
-    newground: "Est. +25% new ground — the big east–west crossing",
-    coords: [[1.385,103.745],[1.378,103.772],[1.366,103.805],[1.350,103.848],[1.342,103.880],[1.352,103.943]],
-    stops: [],
-    comments: []
-  },
-  {
-    num: "7", done: false,
-    dir: "Bedok ⇄ Clementi",
-    vibes: ["Classic", "Food-heavy"],
-    areas: ["Bedok","Geylang","Orchard","Holland Village","Clementi"],
-    best: "",
-    newground: "Est. +12% new ground",
-    coords: [[1.324,103.930],[1.313,103.902],[1.300,103.872],[1.300,103.846],[1.305,103.816],[1.312,103.775],[1.315,103.765]],
-    stops: [],
-    comments: []
-  }
-];
+/* ================= CONFIG ================= */
+const SUPA_URL = "https://slefmsubjmgxgusudnjn.supabase.co";
+const SUPA_KEY = "sb_publishable_RaXc-VAQSUb3Yi0YfHwdLw_S-OSOY1x";
+const AUTHOR_EMAIL = "hyenhatwork@gmail.com";
+const sb = window.supabase ? window.supabase.createClient(SUPA_URL, SUPA_KEY) : null;
 
+/* ================= STATE ================= */
+let TRIPS = [];                 // rows from db (normalized)
+let session = null, isAuthor = false;
+let commentCounts = {}, riderCounts = {};
+const loadedComments = new Set();
+let MY = { rides: [], bingo: new Set(), flags: {} }; // flags: bingoDone, commented, todoAdded, spun
+let todos = [];
+
+/* Device storage, guarded (works on the hosted site; harmless if blocked) */
+const store = {
+  get(k, d){ try{ const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; }catch(e){ return d; } },
+  set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
+};
+
+const tripById = id => TRIPS.find(t => t.id === id);
+const rideNums = () => new Set(MY.rides.map(r => tripById(r.tripId)?.num).filter(Boolean));
+const numRideCount = num => MY.rides.filter(r => tripById(r.tripId)?.num === num).length;
+const tripRideCount = id => MY.rides.filter(r => r.tripId === id).length;
+function escapeHTML(s){ const d = document.createElement("div"); d.textContent = s ?? ""; return d.innerHTML; }
+
+/* ================= BADGES & BINGO DATA ================= */
 const BINGO = [
   ["🐈","A kopitiam cat"],["🛒","A wet market"],["🎨","A wall mural"],
   ["🏪","Old provision shop"],["⛩️","Temple or mosque"],["🌳","Giant rain tree"],
   ["🚲","Uncle on a bicycle"],["🏗️","HDB under construction"],["🛕","Void deck wedding/funeral"]
 ];
-
 const BADGES = [
-  {id:"first",   ico:"🚌", name:"First Follow",    desc:"Log your first ride",            test:s=>s.rides.length>=1},
-  {id:"explorer",ico:"🧭", name:"Explorer",        desc:"Ride 3 different routes",            test:s=>rideNums().size>=3},
-  {id:"repeat",  ico:"🔁", name:"Repeat Rider",    desc:"Ride the same route twice — new alighting points count!", test:s=>[...rideNums()].some(n=>rideCount(n)>=2)},
-  {id:"coastal", ico:"🌊", name:"Coastal Cruiser", desc:"Ride a coastal-vibe route",        test:s=>[...rideNums()].some(n=>ROUTES.find(r=>r.num===n)?.vibes.includes("Coastal"))},
-  {id:"hawker",  ico:"🍜", name:"Hawker Hunter",   desc:"Ride a food-heavy route",          test:s=>[...rideNums()].some(n=>ROUTES.find(r=>r.num===n)?.vibes.includes("Food-heavy"))},
-  {id:"bingo",   ico:"🪟", name:"Front Row Rider", desc:"Complete the bus bingo card",        test:s=>s.bingoDone},
-  {id:"voice",   ico:"💬", name:"Conductor",       desc:"Leave a comment on any route",       test:s=>s.commented},
-  {id:"planner", ico:"📝", name:"Trip Planner",    desc:"Add a to-do for your own ride",      test:s=>s.todoAdded},
-  {id:"lucky",   ico:"🎰", name:"Fate Rider",      desc:"Spin the route picker",              test:s=>s.spun}
+  {id:"first",   ico:"🚌", name:"First Follow",    desc:"Log your first ride",                 test:()=>MY.rides.length>=1},
+  {id:"explorer",ico:"🧭", name:"Explorer",        desc:"Ride 3 different routes",             test:()=>rideNums().size>=3},
+  {id:"repeat",  ico:"🔁", name:"Repeat Rider",    desc:"Ride the same route twice — new alighting points count!", test:()=>[...rideNums()].some(n=>numRideCount(n)>=2)},
+  {id:"coastal", ico:"🌊", name:"Coastal Cruiser", desc:"Ride a coastal-vibe route",           test:()=>MY.rides.some(r=>(tripById(r.tripId)?.vibes||[]).includes("Coastal"))},
+  {id:"hawker",  ico:"🍜", name:"Hawker Hunter",   desc:"Ride a food-heavy route",             test:()=>MY.rides.some(r=>(tripById(r.tripId)?.vibes||[]).includes("Food-heavy"))},
+  {id:"bingo",   ico:"🪟", name:"Front Row Rider", desc:"Complete the bus bingo card",         test:()=>!!MY.flags.bingoDone},
+  {id:"voice",   ico:"💬", name:"Conductor",       desc:"Leave a comment on any route",        test:()=>!!MY.flags.commented},
+  {id:"planner", ico:"📝", name:"Trip Planner",    desc:"Add a to-do for your own ride",       test:()=>!!MY.flags.todoAdded},
+  {id:"lucky",   ico:"🎰", name:"Fate Rider",      desc:"Spin the route picker",               test:()=>!!MY.flags.spun}
 ];
+function setFlag(name){ MY.flags[name] = true; store.set("obo_flags", MY.flags); }
 
-/* ============== SESSION STATE (in-memory only) ============== */
-const S = { rides:[], bingo:new Set(), bingoDone:false, commented:false, todoAdded:false, spun:false };
-const rideNums  = () => new Set(S.rides.map(r=>r.num));
-const rideCount = num => S.rides.filter(r=>r.num===num).length;
-const tripRideCount = i => S.rides.filter(r=>r.i===i).length;
+/* ================= DATA LOADING ================= */
+async function loadTrips(){
+  const { data, error } = await sb.from("trips").select("*")
+    .order("done", { ascending:false }).order("created_at", { ascending:false });
+  if(error) throw error;
+  TRIPS = (data||[]).map(t => ({ ...t,
+    date: t.date_label || "", vibes: t.vibes||[], areas: t.areas||[],
+    coords: t.coords||[], stops: t.stops||[], comments: [] }));
+}
+async function loadCounts(){
+  const [c, r] = await Promise.all([
+    sb.from("comments").select("trip_id"),
+    sb.from("rides").select("trip_id")
+  ]);
+  commentCounts = {}; riderCounts = {};
+  (c.data||[]).forEach(x => commentCounts[x.trip_id] = (commentCounts[x.trip_id]||0)+1);
+  (r.data||[]).forEach(x => riderCounts[x.trip_id] = (riderCounts[x.trip_id]||0)+1);
+}
+async function loadMyRides(){
+  if(session){
+    const { data } = await sb.from("rides").select("id,trip_id,created_at")
+      .eq("user_id", session.user.id).order("created_at");
+    MY.rides = (data||[]).map(r => ({ tripId:r.trip_id, when:new Date(r.created_at), id:r.id }));
+  } else {
+    MY.rides = store.get("obo_rides", []).map(r => ({ ...r, when:new Date(r.when) }));
+  }
+}
+function persistLocalRides(){
+  if(!session) store.set("obo_rides", MY.rides.map(r => ({ ...r, when:r.when.toISOString() })));
+}
+
+/* ================= AUTH ================= */
+async function initAuth(){
+  const { data } = await sb.auth.getSession();
+  session = data.session; applyAuth();
+  sb.auth.onAuthStateChange(async (_e, s) => {
+    session = s; applyAuth();
+    await loadMyRides(); renderBadges(); renderMyRides(); renderRoutes();
+  });
+}
+function applyAuth(){
+  isAuthor = !!session && session.user.email === AUTHOR_EMAIL;
+  const st = document.getElementById("authStatus"), btn = document.getElementById("authBtn");
+  if(session){
+    st.textContent = isAuthor ? `Signed in as author (${session.user.email})` : `Signed in: ${session.user.email} — rides save to your account`;
+    btn.textContent = "Sign out";
+  } else {
+    st.textContent = "Sign in to save your rides & badges across devices";
+    btn.textContent = "✉️ Sign in";
+  }
+  document.getElementById("admin-sec").style.display = isAuthor ? "block" : "none";
+  document.getElementById("navAdmin").style.display = isAuthor ? "inline-block" : "none";
+}
+async function authAction(){
+  if(!sb){ toast("Database not reachable right now"); return; }
+  if(session){ await sb.auth.signOut(); toast("Signed out"); return; }
+  const email = prompt("Your email — we'll send a one-tap sign-in link (no password):");
+  if(!email) return;
+  const { error } = await sb.auth.signInWithOtp({ email,
+    options: { emailRedirectTo: location.origin + location.pathname } });
+  toast(error ? "Couldn't send link: " + error.message : "Link sent — check your inbox ✉️");
+}
 
 /* ================= HEADER STATS ================= */
 function renderStats(){
-  const done = ROUTES.filter(r=>r.done);
-  document.getElementById("stRoutes").textContent = new Set(done.map(r=>r.num)).size;
-  document.getElementById("stStops").textContent = done.reduce((a,r)=>a+r.stops.length,0);
-  const cover = Math.min(100, done.length*9 + done.reduce((a,r)=>a+r.stops.length,0)*2); // playful approximation
+  const done = TRIPS.filter(t => t.done);
+  const uniq = new Set(done.map(t => t.num)).size;
+  const finds = done.reduce((a,t) => a + t.stops.length, 0);
+  document.getElementById("stRoutes").textContent = uniq;
+  document.getElementById("stStops").textContent = finds;
+  const cover = Math.min(100, uniq*2 + finds);
   document.getElementById("stCover").textContent = cover + "%";
   document.getElementById("coverBar").style.width = cover + "%";
 }
 
 /* ================= MAP ================= */
-let map = null, tripLayers = [], focusedTrip = null;
-function lineStyle(r){
-  return { color: r.done ? "#5b2d8e" : "#a8a6a0", weight: r.done ? 5 : 3,
-           opacity: r.done ? .9 : .55, dashArray: r.done ? null : "6 8" };
+let map = null, linesGroup = null, tripLayers = {}, focusedTrip = null;
+function lineStyle(t){
+  return { color: t.done ? "#5b2d8e" : "#a8a6a0", weight: t.done ? 5 : 3,
+           opacity: t.done ? .9 : .55, dashArray: t.done ? null : "6 8" };
 }
 function initMap(){
   try{
-    map = L.map("map",{scrollWheelZoom:false}).setView([1.345,103.83],11);
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{
-      maxZoom:18, attribution:"&copy; OpenStreetMap contributors"
-    }).addTo(map);
-    ROUTES.forEach((r,i)=>{
-      const line = L.polyline(r.coords, lineStyle(r)).addTo(map);
-      line.bindTooltip(`Bus ${r.num} — ${r.done?"ridden":"planned"}. Tap to zoom in.`,{sticky:true});
-      line.on("click", ()=>focusTrip(i));
-      tripLayers[i] = { line, markers: [] };
-    });
+    map = L.map("map", { scrollWheelZoom:false }).setView([1.345,103.83], 11);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+      { maxZoom:18, attribution:"&copy; OpenStreetMap contributors" }).addTo(map);
+    linesGroup = L.layerGroup().addTo(map);
+    map.on("click", onMapClickDraft);
   }catch(e){
     document.getElementById("map").innerHTML =
       "<div style='padding:30px;text-align:center;color:#8a8881'>Map couldn't load (offline?). The trip log below still has everything.</div>";
   }
 }
+function rebuildMapLines(){
+  if(!map) return;
+  clearTripMarkers(); focusedTrip = null;
+  document.getElementById("mapFocus").style.display = "none";
+  linesGroup.clearLayers(); tripLayers = {};
+  TRIPS.forEach(t => {
+    if((t.coords||[]).length < 2) return;
+    const line = L.polyline(t.coords, lineStyle(t)).addTo(linesGroup);
+    line.bindTooltip(`Bus ${t.num} — ${t.done?"ridden":"planned"}. Tap to zoom in.`, { sticky:true });
+    line.on("click", e => { L.DomEvent.stop(e); if(!armMode) focusTrip(t.id); });
+    tripLayers[t.id] = { line, markers: [] };
+  });
+}
 function clearTripMarkers(){
-  if(focusedTrip!=null && tripLayers[focusedTrip]){
-    tripLayers[focusedTrip].markers.forEach(m=>map.removeLayer(m));
+  if(focusedTrip != null && tripLayers[focusedTrip]){
+    tripLayers[focusedTrip].markers.forEach(m => map.removeLayer(m));
     tripLayers[focusedTrip].markers = [];
   }
 }
-function focusTrip(i){
-  if(!map || !tripLayers[i]) return;
-  clearTripMarkers();
-  focusedTrip = i;
-  const r = ROUTES[i];
-  tripLayers.forEach((t,k)=>{
-    if(k===i) t.line.setStyle({opacity:.95, weight:6});
-    else t.line.setStyle({opacity:.08});
-  });
+function focusTrip(id){
+  const t = tripById(id);
+  if(!map || !tripLayers[id] || !t) return;
+  clearTripMarkers(); focusedTrip = id;
+  Object.entries(tripLayers).forEach(([k, l]) =>
+    l.line.setStyle(+k === id ? { opacity:.95, weight:6 } : { opacity:.08 }));
   const layers = [];
-  r.stops.forEach(s=>{
-    if(s.stopPos){
-      layers.push(L.polyline([s.stopPos, s.pos],{color:"#55534d", weight:2, dashArray:"2 6", opacity:.75}).addTo(map));
-    }
-    const m = L.circleMarker(s.pos,{
-      radius:9, color:"#fff", weight:2, fillOpacity:1,
-      fillColor: s.alight ? "#e4452b" : "#5b2d8e"
-    }).addTo(map);
-    m.bindPopup(`<b>${s.photo} ${s.name}</b><br>${s.note}${s.alightAt?`<br><small>🚏 Alight at: ${s.alightAt}</small>`:""}${s.gmap?`<br><a href="${s.gmap}" target="_blank" rel="noopener">Open in Google Maps ↗</a>`:""}<br><small>Bus ${r.num}</small>`);
+  t.stops.forEach(s => {
+    if(s.stopPos) layers.push(L.polyline([s.stopPos, s.pos],
+      { color:"#55534d", weight:2, dashArray:"2 6", opacity:.75 }).addTo(map));
+    const m = L.circleMarker(s.pos, { radius:9, color:"#fff", weight:2,
+      fillOpacity:1, fillColor: s.alight ? "#e4452b" : "#5b2d8e" }).addTo(map);
+    m.bindPopup(`<b>${s.photo||"📍"} ${escapeHTML(s.name)}</b><br>${escapeHTML(s.note||"")}` +
+      (s.alightAt ? `<br><small>🚏 Alight at: ${escapeHTML(s.alightAt)}</small>` : "") +
+      (s.gmap ? `<br><a href="${s.gmap}" target="_blank" rel="noopener">Open in Google Maps ↗</a>` : "") +
+      `<br><small>Bus ${t.num}</small>`);
     layers.push(m);
   });
   const alights = new Map();
-  r.stops.forEach(s=>{
+  t.stops.forEach(s => {
     if(s.stopPos && s.alightAt){
-      if(!alights.has(s.alightAt)) alights.set(s.alightAt, {pos:s.stopPos, places:[]});
+      if(!alights.has(s.alightAt)) alights.set(s.alightAt, { pos:s.stopPos, places:[] });
       alights.get(s.alightAt).places.push(s.name);
     }
   });
-  alights.forEach((a, name)=>{
-    const m = L.marker(a.pos, {icon: L.divIcon({className:"", html:'<div class="busstop-icon">🚏</div>', iconSize:[26,26], iconAnchor:[13,13]})}).addTo(map);
-    m.bindPopup(`<b>🚏 ${name}</b><br>Alight here for: ${a.places.join(", ")}`);
+  alights.forEach((a, name) => {
+    const m = L.marker(a.pos, { icon: L.divIcon({ className:"",
+      html:'<div class="busstop-icon">🚏</div>', iconSize:[26,26], iconAnchor:[13,13] }) }).addTo(map);
+    m.bindPopup(`<b>🚏 ${escapeHTML(name)}</b><br>Alight here for: ${escapeHTML(a.places.join(", "))}`);
     m.bindTooltip(`Alight: ${name}`);
     layers.push(m);
   });
-  tripLayers[i].markers = layers;
-  map.fitBounds(tripLayers[i].line.getBounds(), {padding:[36,36]});
-  const bar = document.getElementById("mapFocus");
-  bar.style.display = "flex";
+  tripLayers[id].markers = layers;
+  map.fitBounds(tripLayers[id].line.getBounds(), { padding:[36,36] });
+  document.getElementById("mapFocus").style.display = "flex";
   document.getElementById("mapFocusLabel").textContent =
-    `Bus ${r.num} · ${r.dir}${r.date ? " · " + r.date : ""}`;
+    `Bus ${t.num} · ${t.dir}${t.date ? " · " + t.date : ""}`;
 }
 function showAllRoutes(){
   if(!map) return;
-  clearTripMarkers();
-  focusedTrip = null;
-  ROUTES.forEach((r,i)=> tripLayers[i].line.setStyle(lineStyle(r)));
-  map.setView([1.345,103.83],11);
+  clearTripMarkers(); focusedTrip = null;
+  TRIPS.forEach(t => tripLayers[t.id] && tripLayers[t.id].line.setStyle(lineStyle(t)));
+  map.setView([1.345,103.83], 11);
   document.getElementById("mapFocus").style.display = "none";
 }
-function viewTripOnMap(i){
-  focusTrip(i);
-  document.getElementById("map-sec").scrollIntoView({behavior:"smooth"});
+function viewTripOnMap(id){
+  focusTrip(id);
+  document.getElementById("map-sec").scrollIntoView({ behavior:"smooth" });
 }
 
-/* ================= ROUTE CARDS + SEARCH ================= */
+/* ================= TRIP LOG + SEARCH ================= */
 let visibleCount = 3, query = "", userPos = null;
-
-function matches(r,q){
+function matches(t, q){
   if(!q) return true;
-  const hay = [r.num, "bus "+r.num, r.dir, r.best, r.newground, ...r.vibes, ...(r.areas||[]),
-    ...r.stops.map(s=>s.name+" "+s.note)].join(" ").toLowerCase();
-  return q.toLowerCase().split(/\s+/).every(w=>hay.includes(w));
+  const hay = [t.num, "bus "+t.num, t.dir, t.best, t.newground, ...(t.vibes||[]), ...(t.areas||[]),
+    ...(t.stops||[]).map(s => (s.name||"")+" "+(s.note||"")+" "+(s.alightAt||""))].join(" ").toLowerCase();
+  return q.toLowerCase().split(/\s+/).every(w => hay.includes(w));
 }
-function distKm(a,b){
+function distKm(a, b){
   const R=6371, dLat=(b[0]-a[0])*Math.PI/180, dLon=(b[1]-a[1])*Math.PI/180;
   const x=Math.sin(dLat/2)**2+Math.cos(a[0]*Math.PI/180)*Math.cos(b[0]*Math.PI/180)*Math.sin(dLon/2)**2;
   return 2*R*Math.asin(Math.sqrt(x));
 }
-function routeDist(r){
-  const pts=[...r.coords, ...r.stops.map(s=>s.pos)];
-  return Math.min(...pts.map(p=>distKm(userPos,p)));
+function tripDist(t){
+  const pts=[...(t.coords||[]), ...(t.stops||[]).map(s=>s.pos)].filter(Boolean);
+  return pts.length ? Math.min(...pts.map(p=>distKm(userPos,p))) : 1e9;
+}
+function tripSnippet(t){
+  const spots = (t.stops||[]).filter(s=>s.alight).map(s=>s.name);
+  if(!spots.length) return "";
+  return spots.slice(0,2).join(", ") + (spots.length>2 ? ` +${spots.length-2} more` : "");
 }
 function renderRoutes(){
   const host = document.getElementById("routeCards");
   host.innerHTML = "";
-  let list = ROUTES.map((r,i)=>({r,i})).filter(({r})=>matches(r,query));
-  if(userPos) list.sort((a,b)=>routeDist(a.r)-routeDist(b.r));
+  let list = TRIPS.filter(t => matches(t, query));
+  if(userPos) list.sort((a,b) => tripDist(a) - tripDist(b));
   const total = list.length;
   document.getElementById("resultsInfo").textContent =
     (query || userPos) ? `${total} route${total!==1?"s":""} found${userPos?" · nearest first":""}` : "";
-  if(!total){
+  if(!TRIPS.length){
+    host.innerHTML = `<div style="color:#8a8881;padding:20px;text-align:center">No trips yet — the odyssey starts soon.</div>`;
+  } else if(!total){
     host.innerHTML = `<div style="color:#8a8881;padding:20px;text-align:center">No routes pass “${escapeHTML(query)}” yet — that's a gap in the fog. Maybe that's the next trip?</div>`;
   }
-  list.slice(0, visibleCount).forEach(({r,i})=>{
+  list.slice(0, visibleCount).forEach(t => {
+    const cnt = tripRideCount(t.id);
     const card = document.createElement("div");
-    card.className = "card";
-    card.id = "trip-" + i;
-    const cnt = tripRideCount(i);
+    card.className = "card"; card.id = "trip-" + t.id;
     card.innerHTML = `
       <div class="card-head">
-        <span class="plate ${r.done?"":"todo"} cond">${r.num}</span>
+        <span class="plate ${t.done?"":"todo"} cond">${escapeHTML(t.num)}</span>
         <div>
-          <div class="title">${r.done ? "Trip log" : "Up next"}${r.date?` <span style="font-weight:600;color:#8a8881;font-size:13px">· ${r.date}</span>`:""}</div>
-          <div class="dir">${r.dir}</div>
+          <div class="title">${t.done ? "Trip log" : "Up next"}${t.date?` <span style="font-weight:600;color:#8a8881;font-size:13px">· ${escapeHTML(t.date)}</span>`:""}</div>
+          <div class="dir">${escapeHTML(t.dir)}</div>
         </div>
-        <div class="tags">${userPos?`<span class="tag" style="background:#e7f3ec;color:#1f8a5b;border-color:#cfe6d8">📍 ${routeDist(r).toFixed(1)} km</span>`:""}${r.vibes.map(v=>`<span class="tag vibe">${v}</span>`).join("")}
-          <span class="tag">${r.done?"✓ Ridden":"In the fog"}</span></div>
+        <div class="tags">${userPos?`<span class="tag" style="background:#e7f3ec;color:#1f8a5b;border-color:#cfe6d8">📍 ${tripDist(t).toFixed(1)} km</span>`:""}${(t.vibes||[]).map(v=>`<span class="tag vibe">${escapeHTML(v)}</span>`).join("")}
+          <span class="tag">${t.done?"✓ Ridden":"In the fog"}</span></div>
       </div>
       <div class="card-body">
-        ${r.best?`<div class="bestfind"><b>Best find</b>${r.best}</div>`:""}
-        <div class="newground">🗺️ ${r.newground}</div>
-        ${r.areas?`<div style="font-size:12px;color:#8a8881">Passes: ${r.areas.join(" · ")}</div>`:""}
-        ${r.stops.length?`<div class="stops">${r.stops.map(s=>`
+        ${t.best?`<div class="bestfind"><b>Best find</b>${escapeHTML(t.best)}</div>`:""}
+        ${t.newground?`<div class="newground">🗺️ ${escapeHTML(t.newground)}</div>`:""}
+        ${(t.areas||[]).length?`<div style="font-size:12px;color:#8a8881">Passes: ${t.areas.map(escapeHTML).join(" · ")}</div>`:""}
+        ${t.stops.length?`<div class="stops">${t.stops.map(s=>`
           <div class="stop ${s.alight?"alight":""}">
             <span class="dot"></span>
-            <span class="photo">${s.photo}</span>
-            <div><b>${s.gmap?`<a href="${s.gmap}" target="_blank" rel="noopener" style="color:inherit">${s.name} ↗</a>`:s.name}</b> ${s.alight?'<span class="alabel">Alight here</span>':""}${s.alightAt?` <span style="font-size:11px;color:#8a8881">(stop: ${s.alightAt})</span>`:""}<br>
-            <span style="color:#6f6d67">${s.note}</span></div>
+            <span class="photo">${s.photo||"📍"}</span>
+            <div><b>${s.gmap?`<a href="${s.gmap}" target="_blank" rel="noopener" style="color:inherit">${escapeHTML(s.name)} ↗</a>`:escapeHTML(s.name)}</b> ${s.alight?'<span class="alabel">Alight here</span>':""}${s.alightAt?` <span style="font-size:11px;color:#8a8881">(stop: ${escapeHTML(s.alightAt)})</span>`:""}<br>
+            <span style="color:#6f6d67">${escapeHTML(s.note||"")}</span></div>
           </div>`).join("")}</div>`
         : `<div style="color:#8a8881;font-size:14px">No notes yet — this one's still waiting for its trip.</div>`}
       </div>
       <div class="card-actions">
-        <button class="primary ${cnt?"followed":""}" data-ride="${i}" onclick="logRide(${i})">
+        <button class="primary ${cnt?"followed":""}" data-ride="${t.id}" onclick="logRide(${t.id})">
           ${cnt?`✓ Ridden ×${cnt} — log another`:"🚌 I rode this route"}</button>
-        <button class="ghost" data-undo="${i}" onclick="undoRide(${i})" style="display:${cnt?"inline-block":"none"}" title="Remove your latest ride on this trip">↩ Undo</button>
-        <button class="ghost" onclick="viewTripOnMap(${i})">🗺️ View on map</button>
-        <button class="ghost" onclick="toggleComments(${i})">💬 Comments (<span id="ccount-${i}">${r.comments.length}</span>)</button>
+        <button class="ghost" data-undo="${t.id}" onclick="undoRide(${t.id})" style="display:${cnt?"inline-block":"none"}" title="Remove your latest ride on this trip">↩ Undo</button>
+        <button class="ghost" onclick="viewTripOnMap(${t.id})">🗺️ View on map</button>
+        <button class="ghost" onclick="toggleComments(${t.id})">💬 Comments (<span id="ccount-${t.id}">${commentCounts[t.id]||0}</span>)</button>
+        ${isAuthor?`<button class="ghost" onclick="deleteTrip(${t.id})" title="Delete this trip">🗑</button>`:""}
+        <span class="hint" style="align-self:center">🚌 <span id="riders-${t.id}">${riderCounts[t.id]||0}</span> rider${(riderCounts[t.id]||0)===1?"":"s"} followed</span>
       </div>
-      <div class="comments" id="comments-${i}">
-        <div id="clist-${i}">${r.comments.map(c=>commentHTML(c)).join("")}</div>
+      <div class="comments" id="comments-${t.id}">
+        <div id="clist-${t.id}"><span class="hint">Loading comments…</span></div>
         <div class="cform">
-          <input id="cname-${i}" placeholder="Name" maxlength="20" aria-label="Your name">
-          <textarea id="ctext-${i}" placeholder="How was your ride? Anything we missed?" aria-label="Your comment"></textarea>
-          <button onclick="addComment(${i})">Post</button>
+          <input id="cname-${t.id}" placeholder="Name" maxlength="20" aria-label="Your name">
+          <textarea id="ctext-${t.id}" placeholder="How was your ride? Anything we missed?" aria-label="Your comment"></textarea>
+          <button onclick="addComment(${t.id})">Post</button>
         </div>
       </div>`;
     host.appendChild(card);
@@ -636,131 +669,152 @@ function nearMe(){
   if(!navigator.geolocation){ toast("This browser doesn't support location"); return; }
   toast("Locating…");
   navigator.geolocation.getCurrentPosition(
-    pos=>{
-      userPos = [pos.coords.latitude, pos.coords.longitude];
-      visibleCount = 3; renderRoutes();
-      toast("Routes sorted nearest to you");
-    },
-    ()=>toast("Couldn't get location — allow permission, and note it needs the hosted (https) version")
+    pos => { userPos = [pos.coords.latitude, pos.coords.longitude];
+      visibleCount = 3; renderRoutes(); toast("Routes sorted nearest to you"); },
+    () => toast("Couldn't get location — check permissions")
   );
 }
-function commentHTML(c){
-  return `<div class="comment"><span class="avatar">${(c.who||"?")[0].toUpperCase()}</span>
-    <div><b>${escapeHTML(c.who)}</b> <span class="meta">· rider</span><br>${escapeHTML(c.text)}</div></div>`;
-}
-function escapeHTML(s){const d=document.createElement("div");d.textContent=s;return d.innerHTML;}
-
-let rideSeq = 0;
-function refreshRouteButtons(i){
-  const c = tripRideCount(i);
-  document.querySelectorAll(`[data-ride='${i}']`).forEach(btn=>{
-    btn.classList.toggle("followed", c>0);
-    btn.innerHTML = c ? `✓ Ridden ×${c} — log another` : "🚌 I rode this route";
-  });
-  document.querySelectorAll(`[data-undo='${i}']`).forEach(b=>{
-    b.style.display = c ? "inline-block" : "none";
-  });
-}
-function logRide(i){
-  const num = ROUTES[i].num;
-  S.rides.push({i, num, when:new Date(), id:++rideSeq});
-  refreshRouteButtons(i);
-  toast(rideCount(num)>1 ? `Bus ${num} again — repeat rides count for badges too 🔁` : `Logged — you've ridden bus ${num}.`);
-  renderBadges(); renderMyRides();
-}
-function undoRide(i){
-  for(let k=S.rides.length-1;k>=0;k--){
-    if(S.rides[k].i===i){ S.rides.splice(k,1); break; }
-  }
-  refreshRouteButtons(i);
-  toast(`Removed your latest ride on bus ${ROUTES[i].num}`);
-  renderBadges(); renderMyRides();
-}
-function removeRide(id){
-  const k = S.rides.findIndex(r=>r.id===id);
-  if(k<0) return;
-  const tripIdx = S.rides[k].i;
-  S.rides.splice(k,1);
-  refreshRouteButtons(tripIdx);
-  toast(`Removed your ride on bus ${ROUTES[tripIdx].num}`);
-  renderBadges(); renderMyRides();
-}
-function tripSnippet(r){
-  const spots = r.stops.filter(s=>s.alight).map(s=>s.name);
-  if(!spots.length) return "";
-  return spots.slice(0,2).join(", ") + (spots.length>2?` +${spots.length-2} more`:"");
-}
-function jumpToTrip(i){
+function jumpToTrip(id){
   query = ""; userPos = null;
   document.getElementById("searchInput").value = "";
-  visibleCount = ROUTES.length;
+  visibleCount = TRIPS.length;
   renderRoutes();
-  const el = document.getElementById("trip-"+i);
+  const el = document.getElementById("trip-" + id);
   if(el){
-    el.scrollIntoView({behavior:"smooth", block:"start"});
+    el.scrollIntoView({ behavior:"smooth", block:"start" });
     el.classList.add("flash");
-    setTimeout(()=>el.classList.remove("flash"), 1800);
+    setTimeout(() => el.classList.remove("flash"), 1800);
   }
 }
-function toggleComments(i){ document.getElementById("comments-"+i).classList.toggle("open"); }
-function addComment(i){
-  const name = document.getElementById("cname-"+i).value.trim() || "Rider";
-  const text = document.getElementById("ctext-"+i).value.trim();
-  if(!text){ toast("Write something first 🙂"); return; }
-  ROUTES[i].comments.push({who:name, text});
-  document.getElementById("clist-"+i).innerHTML = ROUTES[i].comments.map(commentHTML).join("");
-  document.getElementById("ccount-"+i).textContent = ROUTES[i].comments.length;
-  document.getElementById("ctext-"+i).value = "";
-  S.commented = true; renderBadges();
-  toast("Comment posted (demo: lives until refresh)");
+
+/* ================= RIDES ================= */
+function refreshTripButtons(id){
+  const c = tripRideCount(id);
+  document.querySelectorAll(`[data-ride='${id}']`).forEach(btn => {
+    btn.classList.toggle("followed", c > 0);
+    btn.innerHTML = c ? `✓ Ridden ×${c} — log another` : "🚌 I rode this route";
+  });
+  document.querySelectorAll(`[data-undo='${id}']`).forEach(b => {
+    b.style.display = c ? "inline-block" : "none";
+  });
+  const span = document.getElementById("riders-" + id);
+  if(span) span.textContent = riderCounts[id] || 0;
+}
+async function logRide(id){
+  const t = tripById(id); if(!t) return;
+  if(session){
+    const { data, error } = await sb.from("rides")
+      .insert({ trip_id:id, user_id:session.user.id }).select().single();
+    if(error){ toast("Couldn't save ride: " + error.message); return; }
+    MY.rides.push({ tripId:id, when:new Date(data.created_at), id:data.id });
+  } else {
+    MY.rides.push({ tripId:id, when:new Date(), id:"L" + Date.now() + Math.floor(Math.random()*1e4) });
+    persistLocalRides();
+  }
+  riderCounts[id] = (riderCounts[id]||0) + 1;
+  refreshTripButtons(id);
+  toast(numRideCount(t.num) > 1 ? `Bus ${t.num} again — repeat rides count for badges too 🔁`
+    : `Logged — you've ridden bus ${t.num}.${session?"":" Saved on this device — sign in to keep it everywhere."}`);
+  renderBadges(); renderMyRides();
+}
+async function undoRide(id){
+  for(let k = MY.rides.length - 1; k >= 0; k--){
+    if(MY.rides[k].tripId === id){ await removeRide(MY.rides[k].id); return; }
+  }
+}
+async function removeRide(rideId){
+  const k = MY.rides.findIndex(r => r.id === rideId);
+  if(k < 0) return;
+  const tripId = MY.rides[k].tripId;
+  if(session && typeof rideId === "number"){
+    const { error } = await sb.from("rides").delete().eq("id", rideId);
+    if(error){ toast("Couldn't remove: " + error.message); return; }
+  }
+  MY.rides.splice(k, 1); persistLocalRides();
+  riderCounts[tripId] = Math.max(0, (riderCounts[tripId]||1) - 1);
+  refreshTripButtons(tripId);
+  toast(`Removed your ride on bus ${tripById(tripId)?.num||""}`);
+  renderBadges(); renderMyRides();
+}
+
+/* ================= COMMENTS ================= */
+function commentHTML(c){
+  return `<div class="comment"><span class="avatar">${escapeHTML((c.name||"?")[0].toUpperCase())}</span>
+    <div><b>${escapeHTML(c.name)}</b> <span class="meta">· rider</span><br>${escapeHTML(c.body)}</div></div>`;
+}
+async function toggleComments(id){
+  const box = document.getElementById("comments-" + id);
+  box.classList.toggle("open");
+  if(box.classList.contains("open") && !loadedComments.has(id)){
+    const { data } = await sb.from("comments").select("name,body,created_at")
+      .eq("trip_id", id).order("created_at");
+    const t = tripById(id);
+    if(t) t.comments = data || [];
+    loadedComments.add(id);
+    document.getElementById("clist-" + id).innerHTML =
+      (data||[]).map(commentHTML).join("") || `<span class="hint">No comments yet — be the first rider to report back.</span>`;
+  }
+}
+async function addComment(id){
+  const name = document.getElementById("cname-" + id).value.trim() || "Rider";
+  const body = document.getElementById("ctext-" + id).value.trim();
+  if(!body){ toast("Write something first 🙂"); return; }
+  const { error } = await sb.from("comments").insert({ trip_id:id, name, body });
+  if(error){ toast("Couldn't post: " + error.message); return; }
+  const t = tripById(id);
+  t.comments.push({ name, body });
+  document.getElementById("clist-" + id).innerHTML = t.comments.map(commentHTML).join("");
+  commentCounts[id] = (commentCounts[id]||0) + 1;
+  document.getElementById("ccount-" + id).textContent = commentCounts[id];
+  document.getElementById("ctext-" + id).value = "";
+  setFlag("commented"); renderBadges();
+  toast("Comment posted — it's saved for everyone now 💬");
 }
 
 /* ================= PICKER ================= */
 let spinning = false;
 function spinPicker(){
   if(spinning) return;
-  const pool = ROUTES.filter(r=>!r.done).map(r=>r.num);
+  const pool = TRIPS.filter(t => !t.done);
   if(!pool.length){ toast("No routes left in the fog — add more!"); return; }
-  spinning = true; S.spun = true;
+  spinning = true; setFlag("spun");
   const plate = document.getElementById("pickerPlate");
   const result = document.getElementById("pickResult");
   result.textContent = "";
   plate.classList.add("spin");
-  let t = 0;
-  const iv = setInterval(()=>{
-    plate.textContent = pool[Math.floor(Math.random()*pool.length)];
-    t += 90;
-    if(t >= 1800){
-      clearInterval(iv); plate.classList.remove("spin"); spinning=false;
+  let el = 0;
+  const iv = setInterval(() => {
+    plate.textContent = pool[Math.floor(Math.random()*pool.length)].num;
+    el += 90;
+    if(el >= 1800){
+      clearInterval(iv); plate.classList.remove("spin"); spinning = false;
       const pick = pool[Math.floor(Math.random()*pool.length)];
-      plate.textContent = pick;
-      const r = ROUTES.find(x=>x.num===pick);
-      result.textContent = `Fate says: Bus ${pick} — ${r.dir}. No backsies.`;
+      plate.textContent = pick.num;
+      result.textContent = `Fate says: Bus ${pick.num} — ${pick.dir}. No backsies.`;
       renderBadges();
     }
-  },90);
+  }, 90);
 }
 
 /* ================= CHECKLIST + TODO ================= */
 function renderChecklist(){
   const host = document.getElementById("checkDone");
   const seen = new Map();
-  ROUTES.forEach(r=>{
-    const e = seen.get(r.num);
-    if(e){ e.count += r.done?1:0; e.done = e.done || r.done; }
-    else seen.set(r.num, {r, count:r.done?1:0, done:r.done});
+  TRIPS.forEach(t => {
+    const e = seen.get(t.num);
+    if(e){ e.count += t.done?1:0; e.done = e.done || t.done; }
+    else seen.set(t.num, { t, count:t.done?1:0, done:t.done });
   });
-  host.innerHTML = [...seen.values()].map(({r,count,done})=>`
+  host.innerHTML = [...seen.values()].map(({t,count,done}) => `
     <div class="citem">
       <span class="check ${done?"done":""}">${done?"✓":""}</span>
-      <b>Bus ${r.num}</b> <span style="color:#6f6d67">— ${r.dir}</span>
+      <b>Bus ${escapeHTML(t.num)}</b> <span style="color:#6f6d67">— ${escapeHTML(t.dir)}</span>
       <small>${done?(count>1?`done ×${count}`:"done"):"what's next"}</small>
-    </div>`).join("");
+    </div>`).join("") || `<div style="color:#8a8881;font-size:14px">Nothing yet.</div>`;
 }
-const todos = ["Catch bus 36 from Changi at sunrise","Bring the bingo card on the next ride"];
 function renderTodos(){
   const host = document.getElementById("todoList");
-  host.innerHTML = todos.map((t,i)=>`
+  host.innerHTML = todos.map((t,i) => `
     <div class="citem todo-item"><span class="check" style="border-style:dashed"></span>${escapeHTML(t)}
       <button onclick="removeTodo(${i})" aria-label="Remove to-do">✕</button></div>`).join("")
     || `<div style="color:#8a8881;font-size:14px">Nothing planned yet — add your first ride below.</div>`;
@@ -769,19 +823,20 @@ function addTodo(){
   const inp = document.getElementById("todoInput");
   const v = inp.value.trim();
   if(!v) return;
-  todos.push(v); inp.value=""; S.todoAdded = true;
+  todos.push(v); inp.value = "";
+  store.set("obo_todos", todos);
+  setFlag("todoAdded");
   renderTodos(); renderBadges();
 }
-function removeTodo(i){ todos.splice(i,1); renderTodos(); }
-document.addEventListener("keydown",e=>{
-  if(e.key==="Enter" && document.activeElement?.id==="todoInput") addTodo();
+function removeTodo(i){ todos.splice(i,1); store.set("obo_todos", todos); renderTodos(); }
+document.addEventListener("keydown", e => {
+  if(e.key === "Enter" && document.activeElement?.id === "todoInput") addTodo();
 });
 
 /* ================= BADGES ================= */
 function renderBadges(){
-  const host = document.getElementById("badgeGrid");
-  host.innerHTML = BADGES.map(b=>{
-    const got = b.test(S);
+  document.getElementById("badgeGrid").innerHTML = BADGES.map(b => {
+    const got = b.test();
     return `<div class="badge ${got?"unlocked":"locked"}">
       <span class="ico">${b.ico}</span><b>${b.name}</b><span>${b.desc}</span></div>`;
   }).join("");
@@ -789,29 +844,28 @@ function renderBadges(){
 
 /* ================= BINGO ================= */
 function renderBingo(){
-  const host = document.getElementById("bingoGrid");
-  host.innerHTML = BINGO.map((b,i)=>`
-    <div class="bcell ${S.bingo.has(i)?"hit":""}" role="button" tabindex="0" onclick="hitBingo(${i})"
+  document.getElementById("bingoGrid").innerHTML = BINGO.map((b,i) => `
+    <div class="bcell ${MY.bingo.has(i)?"hit":""}" role="button" tabindex="0" onclick="hitBingo(${i})"
       onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();hitBingo(${i})}">
       <span class="bi">${b[0]}</span>${b[1]}</div>`).join("");
 }
 function hitBingo(i){
-  S.bingo.has(i) ? S.bingo.delete(i) : S.bingo.add(i);
+  MY.bingo.has(i) ? MY.bingo.delete(i) : MY.bingo.add(i);
+  store.set("obo_bingo", [...MY.bingo]);
   renderBingo();
   const msg = document.getElementById("bingoMsg");
-  if(S.bingo.size === 9 && !S.bingoDone){
-    S.bingoDone = true;
+  if(MY.bingo.size === 9 && !MY.flags.bingoDone){
+    setFlag("bingoDone");
     msg.textContent = "🎉 Full card! Front Row Rider unlocked.";
     toast("🪟 Front Row Rider badge unlocked!");
     renderBadges();
   } else {
-    msg.textContent = S.bingo.size ? `${S.bingo.size}/9 spotted` : "";
-    if(S.bingo.size < 9) S.bingoDone = S.bingoDone; // keep badge once earned
+    msg.textContent = MY.bingo.size ? `${MY.bingo.size}/9 spotted` : "";
   }
 }
 
 /* ================= MY RIDES ================= */
-const expanded = {author:false, visitor:false};
+const expanded = { author:false, visitor:false };
 function rideListHTML(rows, key){
   const LIMIT = 5;
   const shown = expanded[key] ? rows : rows.slice(0, LIMIT);
@@ -820,34 +874,142 @@ function rideListHTML(rows, key){
   return `<div class="${expanded[key] ? "ridescroll" : ""}">${shown.join("")}</div>${more}`;
 }
 function renderMyRides(){
-  const done = ROUTES.filter(r=>r.done);
-  const aRows = ROUTES.map((r,i)=>({r,i})).filter(({r})=>r.done).map(({r,i})=>`
-    <div class="ride-row click" onclick="jumpToTrip(${i})" title="See this trip">
-      <span class="plate mini cond">${r.num}</span>
+  const done = TRIPS.filter(t => t.done);
+  const aRows = done.map(t => `
+    <div class="ride-row click" onclick="jumpToTrip(${t.id})" title="See this trip">
+      <span class="plate mini cond">${escapeHTML(t.num)}</span>
       <div style="min-width:0;flex:1">
-        <div style="color:#55534d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.dir}</div>
-        ${tripSnippet(r)?`<div style="font-size:11.5px;color:#8a8881;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">⤷ ${tripSnippet(r)}</div>`:""}
+        <div style="color:#55534d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escapeHTML(t.dir)}</div>
+        ${tripSnippet(t)?`<div style="font-size:11.5px;color:#8a8881;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">⤷ ${escapeHTML(tripSnippet(t))}</div>`:""}
       </div>
-      <small>${r.date||""}</small></div>`);
+      <small>${escapeHTML(t.date||"")}</small></div>`);
   document.getElementById("authorRides").innerHTML = done.length
     ? rideListHTML(aRows, "author")
     : `<div style="color:#8a8881;font-size:14px">No trips yet.</div>`;
 
-  const rides = [...S.rides].reverse();
-  const vRows = rides.map(({i,num,when,id})=>{
-      const r = ROUTES[i];
-      return `<div class="ride-row click" onclick="jumpToTrip(${i})" title="See this trip">
-        <span class="plate mini cond">${num}</span>
-        <div style="min-width:0;flex:1">
-          <div style="color:#55534d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r?r.dir:""}</div>
-          ${r&&tripSnippet(r)?`<div style="font-size:11.5px;color:#8a8881;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">⤷ ${tripSnippet(r)}</div>`:""}
-        </div>
-        <small>${when.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}</small>
-        <button class="rm" onclick="event.stopPropagation();removeRide(${id})" aria-label="Remove this ride">✕</button></div>`;
-    });
+  const rides = [...MY.rides].reverse();
+  const vRows = rides.map(({tripId, when, id}) => {
+    const t = tripById(tripId);
+    return `<div class="ride-row click" onclick="jumpToTrip(${tripId})" title="See this trip">
+      <span class="plate mini cond">${t?escapeHTML(t.num):"?"}</span>
+      <div style="min-width:0;flex:1">
+        <div style="color:#55534d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${t?escapeHTML(t.dir):"(trip removed)"}</div>
+        ${t&&tripSnippet(t)?`<div style="font-size:11.5px;color:#8a8881;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">⤷ ${escapeHTML(tripSnippet(t))}</div>`:""}
+      </div>
+      <small>${when.toLocaleDateString([], {day:"numeric", month:"short"})}</small>
+      <button class="rm" onclick="event.stopPropagation();removeRide(${typeof id==="number"?id:`'${id}'`})" aria-label="Remove this ride">✕</button></div>`;
+  });
   document.getElementById("visitorRides").innerHTML = rides.length
     ? rideListHTML(vRows, "visitor")
     : `<div style="color:#8a8881;font-size:14px">No rides yet — tap “🚌 I rode this route” on any trip to start your history.</div>`;
+}
+
+/* ================= ADMIN: ADD A TRIP ================= */
+let armMode = null, draftCoords = [], draftStops = [], draftGroup = null;
+function ensureDraftGroup(){ if(map && !draftGroup) draftGroup = L.layerGroup().addTo(map); }
+function redrawDraft(){
+  if(!map) return; ensureDraftGroup();
+  draftGroup.clearLayers();
+  if(draftCoords.length >= 2)
+    L.polyline(draftCoords, { color:"#e4452b", weight:4, dashArray:"4 6" }).addTo(draftGroup);
+  draftCoords.forEach(p => L.circleMarker(p, { radius:4, color:"#e4452b", fillOpacity:1 }).addTo(draftGroup));
+  draftStops.forEach(s => {
+    if(s.pos) L.circleMarker(s.pos, { radius:8, color:"#fff", weight:2, fillOpacity:1, fillColor:"#5b2d8e" })
+      .bindTooltip(s.name || "find").addTo(draftGroup);
+    if(s.stopPos) L.marker(s.stopPos, { icon: L.divIcon({ className:"", html:'<div class="busstop-icon">🚏</div>', iconSize:[26,26], iconAnchor:[13,13] }) })
+      .bindTooltip("Alight: " + (s.alightAt || "?")).addTo(draftGroup);
+    if(s.pos && s.stopPos) L.polyline([s.stopPos, s.pos], { color:"#55534d", weight:2, dashArray:"2 6" }).addTo(draftGroup);
+  });
+}
+function onMapClickDraft(e){
+  if(!armMode || !isAuthor) return;
+  const ll = [+e.latlng.lat.toFixed(5), +e.latlng.lng.toFixed(5)];
+  if(armMode === "route"){
+    draftCoords.push(ll); redrawDraft();
+    document.getElementById("routeCount").textContent = `${draftCoords.length} points`;
+  } else {
+    const { type, idx } = armMode;
+    draftStops[idx][type === "place" ? "pos" : "stopPos"] = ll;
+    armMode = null;
+    document.getElementById("armHint").textContent = "";
+    redrawDraft(); renderStopRows();
+    toast("Position set ✓");
+  }
+}
+function armRoute(){
+  armMode = armMode === "route" ? null : "route";
+  document.getElementById("armHint").textContent = armMode ? "Tap the map along the bus route, stop by stop." : "";
+  if(armMode) document.getElementById("map-sec").scrollIntoView({ behavior:"smooth" });
+}
+function armStopPos(idx, type){
+  armMode = { type, idx };
+  document.getElementById("armHint").textContent =
+    type === "place" ? "Tap the map where the place itself is." : "Tap the map where you alight (on the route line).";
+  document.getElementById("map-sec").scrollIntoView({ behavior:"smooth" });
+}
+function undoRoutePt(){ draftCoords.pop(); redrawDraft();
+  document.getElementById("routeCount").textContent = `${draftCoords.length} points`; }
+function clearRoutePts(){ draftCoords = []; redrawDraft();
+  document.getElementById("routeCount").textContent = "0 points"; }
+function addStopRow(){
+  draftStops.push({ name:"", photo:"📍", note:"", alightAt:"", gmap:"", alight:true, pos:null, stopPos:null });
+  renderStopRows();
+}
+function removeStopRow(i){ draftStops.splice(i,1); renderStopRows(); redrawDraft(); }
+function dsUpd(i, k, v){ draftStops[i][k] = v; }
+function renderStopRows(){
+  document.getElementById("stopRows").innerHTML = draftStops.map((s,i) => `
+    <div class="stoprow">
+      <div class="inline">
+        <input value="${escapeHTML(s.photo)}" oninput="dsUpd(${i},'photo',this.value)" style="max-width:60px;flex:none" aria-label="Emoji">
+        <input value="${escapeHTML(s.name)}" oninput="dsUpd(${i},'name',this.value)" placeholder="Place name (e.g. Whampoa Makan Place)">
+        <button class="ghost" onclick="removeStopRow(${i})">✕</button>
+      </div>
+      <input value="${escapeHTML(s.note)}" oninput="dsUpd(${i},'note',this.value)" placeholder="Your note — what's good here?">
+      <div class="inline">
+        <input value="${escapeHTML(s.alightAt)}" oninput="dsUpd(${i},'alightAt',this.value)" placeholder="Bus stop name (e.g. Opp Balestier Point)">
+        <input value="${escapeHTML(s.gmap)}" oninput="dsUpd(${i},'gmap',this.value)" placeholder="Google Maps link (optional)">
+      </div>
+      <div class="inline">
+        <button class="ghost" onclick="armStopPos(${i},'place')">📍 Set place on map ${s.pos?"✓":""}</button>
+        <button class="ghost" onclick="armStopPos(${i},'stop')">🚏 Set alight stop ${s.stopPos?"✓":""}</button>
+      </div>
+    </div>`).join("");
+}
+async function saveTrip(){
+  const num = document.getElementById("f_num").value.trim();
+  if(!num){ toast("Bus number is required"); return; }
+  if(draftCoords.length < 2){ toast("Draw the route line on the map first (≥2 points)"); return; }
+  const splitCsv = id => document.getElementById(id).value.split(",").map(s=>s.trim()).filter(Boolean);
+  const stops = draftStops.filter(s => s.name && s.pos);
+  const row = {
+    num, done: document.getElementById("f_done").value === "true",
+    dir: document.getElementById("f_dir").value.trim(),
+    date_label: document.getElementById("f_date").value.trim(),
+    vibes: splitCsv("f_vibes"), areas: splitCsv("f_areas"),
+    best: document.getElementById("f_best").value.trim(),
+    newground: document.getElementById("f_ng").value.trim(),
+    coords: draftCoords, stops
+  };
+  document.getElementById("saveMsg").textContent = "Saving…";
+  const { error } = await sb.from("trips").insert(row);
+  if(error){ document.getElementById("saveMsg").textContent = ""; toast("Couldn't save: " + error.message); return; }
+  ["f_num","f_dir","f_date","f_vibes","f_areas","f_best","f_ng"].forEach(id => document.getElementById(id).value = "");
+  draftCoords = []; draftStops = []; renderStopRows(); redrawDraft();
+  document.getElementById("routeCount").textContent = "0 points";
+  document.getElementById("saveMsg").textContent = "";
+  await loadTrips(); await loadCounts();
+  renderAll();
+  toast(`Bus ${num} is live 🚌 — everyone can see it now`);
+}
+async function deleteTrip(id){
+  const t = tripById(id);
+  if(!confirm(`Delete the bus ${t?.num} trip? This also removes its comments and ride logs. This can't be undone.`)) return;
+  const { error } = await sb.from("trips").delete().eq("id", id);
+  if(error){ toast("Couldn't delete: " + error.message); return; }
+  await loadTrips(); await loadCounts(); await loadMyRides();
+  renderAll();
+  toast("Trip deleted");
 }
 
 /* ================= TOAST ================= */
@@ -856,11 +1018,35 @@ function toast(msg){
   const t = document.getElementById("toast");
   t.textContent = msg; t.classList.add("show");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(()=>t.classList.remove("show"), 2600);
+  toastTimer = setTimeout(() => t.classList.remove("show"), 2800);
 }
 
-/* ================= BOOT ================= */
-renderStats(); renderRoutes(); renderChecklist(); renderTodos(); renderBadges(); renderBingo(); renderMyRides(); initMap();
+/* ================= RENDER ALL + BOOT ================= */
+function renderAll(){
+  renderStats(); renderRoutes(); renderChecklist(); renderTodos();
+  renderBadges(); renderMyRides(); rebuildMapLines();
+}
+(async function boot(){
+  todos = store.get("obo_todos", ["Catch bus 36 from Changi at sunrise", "Bring the bingo card on the next ride"]);
+  MY.bingo = new Set(store.get("obo_bingo", []));
+  MY.flags = store.get("obo_flags", {});
+  renderBingo(); renderTodos();
+  initMap();
+  if(!sb){
+    document.getElementById("routeCards").innerHTML =
+      `<div style="color:#8a8881;padding:20px;text-align:center">The database library couldn't load. If you're previewing this file offline or inside a sandbox, open the live hosted site instead — everything works there.</div>`;
+    return;
+  }
+  try{
+    await initAuth();
+    await Promise.all([loadTrips(), loadCounts()]);
+    await loadMyRides();
+    renderAll();
+  }catch(err){
+    document.getElementById("routeCards").innerHTML =
+      `<div style="color:#8a8881;padding:20px;text-align:center">Couldn't reach the trip database (${escapeHTML(err.message||"network error")}).<br>If this is a fresh setup, make sure the SQL script has been run in Supabase.</div>`;
+  }
+})();
 </script>
 </body>
 </html>
