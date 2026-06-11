@@ -364,7 +364,7 @@
 <footer>
   <div class="wrap">
     <div><b>One Bus Odyssey</b> — a one-person documentation project; everyone's welcome to follow.</div>
-    <div>Route data © LTA, via <a href="https://busrouter.sg" style="color:var(--pole)">BusRouter SG</a> · Place search © OpenStreetMap contributors</div>
+    <div>Route data © LTA, via <a href="https://busrouter.sg" style="color:var(--pole)">BusRouter SG</a> · Place search © OpenStreetMap contributors &amp; OneMap (SLA)</div>
     <div>Trips and comments live in a shared database — what you post stays. Your rides, badges, bingo and to-dos are saved on this device; sign in with your email to keep them across devices.</div>
   </div>
 </footer>
@@ -1012,16 +1012,19 @@ async function findPlace(i){
   if(!name){ toast("Type the place name first"); return; }
   toast("Searching place…");
   try{
-    const r = await fetch("https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=sg&q=" +
-      encodeURIComponent(name));
-    const js = await r.json();
-    if(!js.length){ toast(`Couldn't find “${name}” — use 📍 Set on map instead`); return; }
-    draftStops[i].pos = [+(+js[0].lat).toFixed(5), +(+js[0].lon).toFixed(5)];
+    let p = parseGmapCoords(draftStops[i].gmap);
+    if(!p && draftStops[i].gmap && !/^https?:/i.test(draftStops[i].gmap)){
+      p = await oneMapSearch(draftStops[i].gmap).catch(() => null);
+      if(p) draftStops[i].gmap = "";
+    }
+    if(!p) p = await geocodeName(name, areaHint());
+    if(!p){ toast(`Couldn't find “${name}” — paste its Google Maps link or address/postal code in the link field, then try again`); return; }
+    draftStops[i].pos = p;
     if(!draftStops[i].gmap)
       draftStops[i].gmap = "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(name + " Singapore");
     renderStopRows(); redrawDraft();
     if(map) map.setView(draftStops[i].pos, 16);
-    toast(`Found: ${js[0].display_name.split(",")[0]} ✓ — check the pin looks right`);
+    toast(`Found “${name}” ✓ — check the pin looks right`);
   }catch(e){ toast("Place search failed: " + e.message); }
 }
 const normName = s => (s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -1035,11 +1038,41 @@ async function getServiceStops(num){
   }));
   return out;
 }
-async function geocodeName(name){
+async function osmSearch(q){
   const r = await fetch("https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=sg&q=" +
-    encodeURIComponent(name));
+    encodeURIComponent(q));
   const js = await r.json();
   return js.length ? [+(+js[0].lat).toFixed(5), +(+js[0].lon).toFixed(5)] : null;
+}
+async function oneMapSearch(q){
+  const r = await fetch("https://www.onemap.gov.sg/api/common/elastic/search?returnGeom=Y&getAddrDetails=N&pageNum=1&searchVal=" +
+    encodeURIComponent(q));
+  const js = await r.json();
+  if(js.results && js.results.length){
+    const x = js.results[0];
+    return [+(+x.LATITUDE).toFixed(5), +(+x.LONGITUDE).toFixed(5)];
+  }
+  return null;
+}
+function parseGmapCoords(url){
+  if(!url || !/^https?:/i.test(url)) return null;
+  let m = url.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/);   // the place marker itself
+  if(!m) m = url.match(/[?&]q(?:uery)?=(-?\d+\.\d+)[,%2C+]+(-?\d+\.\d+)/i);
+  if(!m) m = url.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);      // viewport centre (close enough)
+  return m ? [+(+m[1]).toFixed(5), +(+m[2]).toFixed(5)] : null;
+}
+async function geocodeName(name, hint){
+  let p = await osmSearch(name);
+  if(!p) p = await oneMapSearch(name).catch(() => null);
+  if(!p && hint){
+    await new Promise(r => setTimeout(r, 1100));
+    p = await osmSearch(name + " " + hint);
+    if(!p) p = await oneMapSearch(name + " " + hint).catch(() => null);
+  }
+  return p;
+}
+function areaHint(){
+  return (document.getElementById("f_areas").value.split(",")[0] || "").trim();
 }
 async function autoCompleteFinds(){
   const num = document.getElementById("f_num").value.trim().toUpperCase();
@@ -1049,8 +1082,15 @@ async function autoCompleteFinds(){
   for(const s of draftStops){
     if(!s.name) continue;
     if(!s.pos){
+      const linkPos = parseGmapCoords(s.gmap);
+      if(linkPos){ s.pos = linkPos; geocoded++; }
+      else if(s.gmap && !/^https?:/i.test(s.gmap)){
+        try{ const p2 = await oneMapSearch(s.gmap); if(p2){ s.pos = p2; s.gmap = ""; geocoded++; } }catch(e){}
+      }
+    }
+    if(!s.pos){
       try{
-        const p = await geocodeName(s.name);
+        const p = await geocodeName(s.name, areaHint());
         if(p){ s.pos = p; geocoded++; } else failed.push(s.name);
       }catch(e){ failed.push(s.name); }
       await new Promise(r => setTimeout(r, 1100)); // geocoder rate-limit politeness
@@ -1117,6 +1157,10 @@ function addStopRow(){
   renderStopRows();
 }
 function removeStopRow(i){ draftStops.splice(i,1); renderStopRows(); redrawDraft(); }
+function insertStopRow(i){
+  draftStops.splice(i + 1, 0, { name:"", photo:"📍", note:"", alightAt:"", gmap:"", alight:true, pos:null, stopPos:null });
+  renderStopRows();
+}
 function dsUpd(i, k, v){ draftStops[i][k] = v; }
 function renderStopRows(){
   document.getElementById("stopRows").innerHTML = draftStops.map((s,i) => `
@@ -1124,12 +1168,13 @@ function renderStopRows(){
       <div class="inline">
         <input value="${escapeHTML(s.photo)}" oninput="dsUpd(${i},'photo',this.value)" style="max-width:60px;flex:none" aria-label="Emoji">
         <input value="${escapeHTML(s.name)}" oninput="dsUpd(${i},'name',this.value)" placeholder="Place name (e.g. Whampoa Makan Place)">
-        <button class="ghost" onclick="removeStopRow(${i})">✕</button>
+        <button class="ghost" onclick="insertStopRow(${i})" title="Insert a find below this one">＋↓</button>
+        <button class="ghost" onclick="removeStopRow(${i})" title="Remove this find">✕</button>
       </div>
       <input value="${escapeHTML(s.note)}" oninput="dsUpd(${i},'note',this.value)" placeholder="Your note — what's good here?">
       <div class="inline">
         <input value="${escapeHTML(s.alightAt)}" oninput="dsUpd(${i},'alightAt',this.value)" placeholder="Bus stop name (e.g. Opp Balestier Point)">
-        <input value="${escapeHTML(s.gmap)}" oninput="dsUpd(${i},'gmap',this.value)" placeholder="Google Maps link (optional)">
+        <input value="${escapeHTML(s.gmap)}" oninput="dsUpd(${i},'gmap',this.value)" placeholder="Google Maps link, or address / postal code (helps lookup)">
       </div>
       <div class="inline">
         <button class="ghost" onclick="findPlace(${i})">🔍 Find place by name ${s.pos?"✓":""}</button>
